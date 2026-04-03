@@ -1,0 +1,21 @@
+[Unit]
+Description=Mong Consulting API Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mong
+ExecStart=/usr/bin/node /opt/mong/dist/index.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/mong/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mong-consulting
+
+[Install]
+WantedBy=multi-user.target

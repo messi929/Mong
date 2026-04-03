@@ -1,0 +1,83 @@
+{
+  "name": "mong-consulting",
+  "version": "1.0.0",
+  "description": "자기소개서/이력서 AI 컨설팅 데스크톱 앱",
+  "author": "messi929",
+  "repository": "https://github.com/messi929/Mong",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
+    "dev:renderer": "vite",
+    "dev:main": "tsc -p tsconfig.main.json && electron dist/main/main.js",
+    "build": "npm run build:renderer && npm run build:main",
+    "build:renderer": "vite build",
+    "build:main": "tsc -p tsconfig.main.json",
+    "start": "electron dist/main/main.js",
+    "package": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@nicolo-ribaudo/chokidar-2": "^2.1.8-no-fsevents.3",
+    "adm-zip": "^0.5.17",
+    "better-sqlite3": "^11.7.0",
+    "diff": "^7.0.0",
+    "docx": "^9.6.1",
+    "dotenv": "^17.3.1",
+    "electron-updater": "^6.8.3",
+    "fast-xml-parser": "^5.5.10",
+    "file-saver": "^2.0.5",
+    "hwp.js": "^0.0.3",
+    "mammoth": "^1.8.0",
+    "node-hwp": "^0.1.0-alpha",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/diff": "^6.0.0",
+    "@types/file-saver": "^2.0.7",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.1.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  },
+  "build": {
+    "appId": "com.mong.consulting",
+    "productName": "Mong Consulting",
+    "files": [
+      "dist/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mong Consulting"
+    },
+    "extraResources": [],
+    "publish": {
+      "provider": "github",
+      "owner": "messi929",
+      "repo": "Mong"
+    }
+  }
+}

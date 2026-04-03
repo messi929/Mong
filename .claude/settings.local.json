@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(npm run:*)",
+      "Bash(node -e \"require\\('./dist/main/main.js'\\)\")",
+      "Bash(NODE_ENV=development npx electron:*)",
+      "Bash(npx electron-rebuild:*)",
+      "Bash(curl:*)",
+      "Bash(npm list:*)",
+      "Bash(node:*)",
+      "Bash(npm search:*)",
+      "Bash(pip list:*)",
+      "Bash(unzip -p \"docs/02. 산업은행 인턴/산업은행 인턴_IT_JD.hwpx\" Contents/section0.xml)",
+      "Read(//tmp/**)",
+      "Bash(npx electron:*)",
+      "Bash(find:*)",
+      "Bash(ssh:*)",
+      "Bash(rsync:*)",
+      "Bash(scp -r \"C:/src/Mong/server/dist\" root@77.42.78.9:/opt/mong/)",
+      "Bash(scp \"C:/src/Mong/server/package.json\" root@77.42.78.9:/opt/mong/)",
+      "Bash(scp \"C:/src/Mong/server/tsconfig.json\" root@77.42.78.9:/opt/mong/)",
+      "Bash(scp \"C:/src/Mong/server/.env.example\" root@77.42.78.9:/opt/mong/)",
+      "Bash(scp \"C:/src/Mong/server/mong-consulting.service\" root@77.42.78.9:/opt/mong/)",
+      "Bash(xxd)",
+      "Bash(npx tsx:*)",
+      "Bash(scp -r \"C:/src/Mong/server/dist\" \"C:/src/Mong/server/package.json\" root@77.42.78.9:/opt/mong/)",
+      "Bash(npx electron-builder:*)"
+    ]
+  }
+}
