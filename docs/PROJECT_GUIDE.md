@@ -375,18 +375,65 @@ npx tsx scripts/build-style-profile.ts
 - 확정 시 Before/After 재평가 + shimmer 로딩
 - 총평 편집 가능
 
-### v3.0 (2026-04-04): 스타일 프로파일 + 로그인 + exe
+### v3.0 (2026-04-04): 스타일 프로파일 + 로그인 + exe + 자동 업데이트
 - **스타일 프로파일 시스템**: 18쌍+27건 전체 분석 → 규칙 세트 추출 → 프롬프트 자동 반영
-- **로그인/회원가입**: JWT 인증, 직원별 고객 분리
-- **exe 패키징**: Windows NSIS 인스톨러 (347MB)
+- **로그인/회원가입**: JWT 인증, 셀프 회원가입, 직원별 고객 분리
+- **exe 패키징**: Windows NSIS 인스톨러
+- **자동 업데이트**: electron-updater + GitHub Releases (앱 실행 시 자동 감지 → 다운로드 → 재시작)
+- **GitHub 연동**: https://github.com/messi929/Mong (public)
 - 학습 데이터 일괄 import: 14세트 36리비전 + JD 12건
+- 합격자소서 캘리브레이션: 27건 (docx 19 + hwpx 6 + hwp 2)
 - hwp/hwpx 파싱: adm-zip + fast-xml-parser
 - Word 내보내기: docx 라이브러리
 - 과거 이력 불러오기, 첨삭 이력 개별 삭제
-- 다크모드 (CSS 변수 완전 전환)
+- 다크모드 (CSS 변수 완전 전환, 하드코딩 색상 0건)
 - 품질 대시보드 (항목별 점수 이력)
 - 패턴 분석 자동화 (저장 시 AI 분석)
 - API 토큰 보안 강화 (64자 랜덤)
+
+---
+
+## 배포 가이드
+
+### 팀원에게 전달
+1. GitHub Release에서 `Mong Consulting Setup x.x.x.exe` 다운로드 링크 공유
+2. 설치 → 로그인 화면 → **회원가입** → 바로 사용
+3. 서버 URL은 코드에 내장 (별도 설정 불필요)
+
+### 업데이트 배포 (수정 작업 후)
+```bash
+# 1. 코드 수정 후 버전 올리기
+# package.json의 "version": "1.0.0" → "1.1.0"
+
+# 2. 빌드 + exe 생성
+npm run build && npx electron-builder --win
+
+# 3. Git 커밋 + 푸시
+git add -A && git commit -m "v1.1.0: 변경 내용" && git push
+
+# 4. GitHub Release 생성
+# https://github.com/messi929/Mong/releases/new
+# Tag: v1.1.0
+# 파일 3개 업로드:
+#   - dist/Mong Consulting Setup 1.1.0.exe
+#   - dist/Mong Consulting Setup 1.1.0.exe.blockmap
+#   - dist/latest.yml
+```
+→ 팀원 앱이 자동 감지 → "업데이트 있습니다" → 재시작
+
+### 서버만 수정한 경우 (앱 재배포 불필요)
+```bash
+cd server && npm run build
+scp -r server/dist root@77.42.78.9:/opt/mong/
+ssh root@77.42.78.9 "systemctl restart mong-consulting"
+```
+AI 엔진, 프롬프트, DB 스키마 등 서버 쪽 수정은 이것만으로 즉시 반영됩니다.
+
+### 스타일 프로파일 재빌드
+```bash
+npx tsx scripts/build-style-profile.ts
+# 학습 데이터 5건 추가될 때마다 실행 권장
+```
 
 ---
 
@@ -403,7 +450,6 @@ npx tsx scripts/build-style-profile.ts
 - [ ] **산업군별 세분화 프로파일** — 데이터 50쌍 이상 시 금융/IT/공공 별도 프로파일 생성
 - [ ] **컨설턴트 총평 학습** — 컨설턴트가 수정한 총평을 다음 평가에 반영하는 피드백 루프
 - [ ] **앱 아이콘** — 현재 기본 Electron 아이콘 → 커스텀 아이콘으로 교체
-- [ ] **자동 업데이트** — electron-updater로 새 버전 자동 배포
 
 ### 우선순위 낮음 (데이터 축적 후)
 - [ ] **파인튜닝 검토** — 학습 데이터 100쌍 이상 시 오픈소스 한국어 LLM 파인튜닝 평가
