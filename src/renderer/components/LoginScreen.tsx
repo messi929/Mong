@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 
 interface Props {
   onLogin: (user: { id: number; username: string; displayName: string; role: string }) => void;
+  appVersion?: string;
 }
 
-export default function LoginScreen({ onLogin }: Props) {
+export default function LoginScreen({ onLogin, appVersion }: Props) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -51,7 +52,10 @@ export default function LoginScreen({ onLogin }: Props) {
       <div className="login-card">
         <div className="login-header">
           <h1 className="login-brand">Mong</h1>
-          <p className="login-subtitle">AI 자소서 컨설팅</p>
+          <p className="login-subtitle">
+            AI 자소서 컨설팅
+            {appVersion && <span style={{ marginLeft: '8px', fontSize: '12px', opacity: 0.6 }}>v{appVersion}</span>}
+          </p>
         </div>
 
         <form onSubmit={handleSubmit}>

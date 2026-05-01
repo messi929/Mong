@@ -28,11 +28,16 @@ export default function App() {
   const [selectedClientId, setSelectedClientId] = useState<number | undefined>();
   const [selectedConsultingId, setSelectedConsultingId] = useState<number | undefined>();
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+  const [appVersion, setAppVersion] = useState('');
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
     localStorage.setItem('theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
+
+  useEffect(() => {
+    (window as any).api.getAppVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   const loadClients = useCallback(async () => {
     try {
@@ -69,7 +74,7 @@ export default function App() {
 
   // 로그인 전
   if (!user) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleLogin} appVersion={appVersion} />;
   }
 
   return (
@@ -85,6 +90,11 @@ export default function App() {
             onClick={() => setCurrentPage('dashboard')}>대시보드</button>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {appVersion && (
+            <span style={{ fontSize: '12px', color: 'var(--gray-400)', fontVariantNumeric: 'tabular-nums' }}>
+              v{appVersion}
+            </span>
+          )}
           <span style={{ fontSize: '13px', color: 'var(--gray-500)' }}>{user.displayName}</span>
           <button className="nav-settings" onClick={() => setShowImport(true)}>Import</button>
           <button className="nav-settings" onClick={() => setDarkMode(!darkMode)}>

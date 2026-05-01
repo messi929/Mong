@@ -18,6 +18,8 @@ import { registerImportHandlers } from './handlers/importHandlers';
 
 if (process.env.MONG_SERVER_URL) setServerUrl(process.env.MONG_SERVER_URL);
 
+ipcMain.handle('app:getVersion', () => app.getVersion());
+
 // Auth handlers (토큰 없이 호출 가능)
 ipcMain.handle('auth:login', async (_, data: { username: string; password: string }) => {
   const url = `${getServerUrl()}/api/auth/login`;

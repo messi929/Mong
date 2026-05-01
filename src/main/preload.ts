@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('api', {
+  // 앱
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+
   // 인증
   login: (data: any) => ipcRenderer.invoke('auth:login', data),
   register: (data: any) => ipcRenderer.invoke('auth:register', data),
