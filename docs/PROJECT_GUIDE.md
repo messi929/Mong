@@ -4,7 +4,7 @@
 
 세계적 수준의 자기소개서/이력서 컨설턴트의 첨삭 패턴을 학습하여, 동일하거나 더 나은 수준의 AI 컨설팅을 제공하는 데스크톱 애플리케이션.
 
-**현재 버전:** v3.0 (2026-04-04)
+**현재 버전:** v3.1 (2026-05-01)
 
 ## 아키텍처
 
@@ -46,22 +46,29 @@
 C:\src\Mong\
 ├── .env                                   # 서버 URL + 토큰
 ├── package.json
-├── docs/                                  # 학습 데이터 원본 파일
+├── docs/                                  # 학습 데이터 + 시스템 문서
 │   ├── 00. 합격자소서/                     # 캘리브레이션 데이터 (27건)
 │   ├── 01~14. 첨삭사례/                   # 학습 데이터 (14세트)
-│   └── PROJECT_GUIDE.md                   # 이 문서
+│   ├── PROJECT_GUIDE.md                   # 이 문서 (시스템 전반)
+│   ├── REVISION_PRINCIPLES.md             # 첨삭 원칙 영구 참조 (v3.1)
+│   ├── EXPERT_KNOWHOW.md                  # 컨설턴트 advisory 레이어 (v3.1)
+│   ├── CONSULTING_MECHANISM.md            # 메커니즘 의논 문서
+│   ├── EXPERT_INTERVIEW.md                # 노하우 추출 인터뷰
+│   └── IMPROVEMENT_ROADMAP.md             # 자체 검증된 개선 로드맵
 ├── scripts/
 │   ├── import-calibration.ts              # 합격자소서 임포트
 │   ├── import-calibration-hwpx.ts         # 합격자소서 HWPX 추가 임포트
 │   ├── import-training.ts                 # 학습 데이터 일괄 임포트
-│   └── build-style-profile.ts             # 스타일 프로파일 빌드
+│   ├── build-style-profile.ts             # 스타일 프로파일 빌드
+│   └── smoke-test.js                      # Playwright-core 자동 골든패스 테스트 (v3.1)
 ├── server/                                # 백엔드 API 서버
 │   ├── src/
 │   │   ├── index.ts                       # 서버 진입점 (포트 3100)
 │   │   ├── database.ts                    # SQLite 스키마 + 마이그레이션
 │   │   ├── auth.ts                        # JWT 인증 + 회원가입/로그인
 │   │   ├── routes.ts                      # REST API 라우트
-│   │   └── aiEngine.ts                    # AI 첨삭/평가/패턴분석 엔진
+│   │   ├── aiEngine.ts                    # AI 첨삭/평가/패턴분석 엔진
+│   │   └── diffMetrics.ts                 # edit_ratio/edit_binary 계산 (v3.1)
 │   ├── mong-consulting.service            # systemd 서비스 파일
 │   └── .env                               # 서버 환경변수 (API 키, JWT 시크릿)
 ├── src/
@@ -117,6 +124,11 @@ C:\src\Mong\
 | company_name, position | TEXT | 지원 회사/직무 |
 | job_posting | TEXT | 공고 내용 |
 | status | TEXT | draft / in_progress / completed |
+| **edit_ratio** | REAL | first→final 변경률 (0.0-1.0, v3.1) |
+| **edit_binary** | INTEGER | 컨설턴트가 손댔는가 (0/1, v3.1) |
+| **active_time_seconds** | INTEGER | 누적 작업 시간 (v3.1) |
+| **outcome** | TEXT | pending / document_passed / document_failed / final_passed / final_failed / unknown (v3.1) |
+| **outcome_received_at** | TEXT | 결과 입력 시각 (v3.1) |
 
 ### revisions (첨삭 버전)
 | 컬럼 | 타입 | 설명 |
@@ -275,6 +287,19 @@ style_profile v1:
 ### 4. 대시보드 (DashboardPage)
 - 개요 탭: 총 고객, 이번 달 첨삭, 진행중/완료 + 최근 첨삭 테이블
 - 품질 탭: 평균 평가 점수, 항목별 점수 이력, 캘리브레이션/학습 데이터 건수
+- **측정 탭** (v3.1): 평균 수정률, 무수정 통과율, 평균 작업시간, 결과 입력 대기 (30일+) + 결과 분포 + 최근 첨삭별 메트릭 + outcome 인라인 변경
+
+### 4-1. Phase 0 측정 인프라 (v3.1)
+모든 컨설팅에 자동 누적되는 측정값 4종:
+
+| 메트릭 | 정의 | 계산 시점 |
+|---|---|---|
+| `edit_ratio` | first→final 정규화 글자 단위 Levenshtein / max 길이 | final revision 저장 시 자동 |
+| `edit_binary` | 정규화 후 차이 0 = 0(untouched), 그 외 1(edited) | final revision 저장 시 자동 |
+| `active_time_seconds` | 컨설턴트가 화면을 보고 있던 시간 (2분 idle 임계) | 클라이언트 60s 백업 flush + 필드 변경 디바운스 동봉 |
+| `outcome` | pending/서류통과/서류탈락/최종합격/최종탈락/모름 | 컨설턴트 수동 입력 (대시보드 측정 탭 또는 ClientsPage 첨삭이력) |
+
+정규화 = 공백·구두점·줄바꿈 무시. 의미 있는 변경만 측정.
 
 ### 5. AI 첨삭 엔진
 - Claude claude-sonnet-4-20250514 사용
@@ -283,6 +308,10 @@ style_profile v1:
 - 직군별 어조 자동 조정 (IT/금융/공공기관/마케팅/CS)
 - 학습 데이터 few-shot (고객별 우선, 최대 3건)
 - JSON 응답: 첨삭 본문 + 코멘트 + 5항목 평가
+- **(v3.1) 메타 원칙 2종 신설** — 자세한 내용은 `docs/REVISION_PRINCIPLES.md`
+  1. **수정 필요 판단**: 원문이 이미 기준 충족이면 손대지 않음. 부분 충족이면 미충족 부분만.
+  2. **사람이 쓴 글처럼**: AI 흔적(균등 문장 길이, 형식 연결어, 평탄한 감정 톤) 회피. 작성자 어휘·디테일 보존.
+- **(v3.1) EXPERT_KNOWHOW advisory 레이어** — `docs/EXPERT_KNOWHOW.md`. 컨설턴트 본인이 작성한 판단 프레임워크를 시스템 프롬프트 끝에 부착. 현재 advisory 단계 (충돌 시 기존 룰 우선).
 
 ### 6. AI 평가 엔진 (분리)
 - 첨삭과 별도 API (`/ai/evaluate`)
@@ -347,6 +376,43 @@ npx tsx scripts/build-style-profile.ts
 ---
 
 ## 변경 이력
+
+### v3.1 (2026-05-01): Phase 0 측정 인프라 + AI 메타 원칙
+
+**측정 인프라**
+- DB 컬럼 5종 추가: `edit_ratio`, `edit_binary`, `active_time_seconds`, `outcome`, `outcome_received_at`
+- 정규화(공백·구두점 제거) 후 글자 단위 Levenshtein → 자동 메트릭 계산 (`server/src/diffMetrics.ts`)
+- final revision 저장 시점에 latest first vs final 비교하여 consultings에 반영
+- 클라이언트 active time 추적 (2분 idle 임계, 10초 tick, 60초 백업 flush + 필드 변경 디바운스 동봉)
+- 신규 endpoint: `PUT /api/consultings/:id` (회사명·직무·공고·active time·outcome 부분 업데이트), `PUT /api/revisions/:id`, `GET /api/dashboard/metrics`
+
+**자동 저장 메커니즘**
+- 첨삭 시작 시 Consulting 자동 생성 (draft) → 모든 단계(draft/first/second/final) 자동 저장
+- "저장" 버튼 제거 → 자동저장 인디케이터 + 확정 후 학습 등록 토글 + "마무리" 버튼
+- 인라인 새 고객 등록 시 회사·직무 채워져 있으면 Consulting도 같이 draft 생성
+- 학습 데이터 등록은 *명시적 토글* (컨설턴트 수정 있으면 기본 ON, AI 결과만이면 기본 OFF)
+- React state race 수정: `consultingIdRef`, `revisionIdsRef`로 즉시 동기화
+
+**AI 메타 원칙 2종 신설** (자세히는 `docs/REVISION_PRINCIPLES.md`)
+- **0-1 수정 필요 판단**: 원문이 기준 충족이면 손대지 않음. 부분 충족이면 미충족 부분만 핀포인트.
+- **0-2 사람이 쓴 글처럼**: AI 흔적 회피 (균등 문장 길이, "이를 통해" 등 형식 연결어, 평탄한 감정 톤). 작성자 어휘·디테일 보존.
+- 두 원칙은 모든 첨삭 룰에 *우선* 적용. 어떤 룰이 결과를 AI스럽게 만들면 그 룰을 적용하지 않음.
+
+**EXPERT_KNOWHOW advisory 레이어** (`docs/EXPERT_KNOWHOW.md`)
+- 컨설턴트 본인이 작성한 판단 프레임워크 (8개 카테고리, 12 섹션)
+- 시스템 프롬프트 *맨 끝*에 부착 (recency 효과)
+- 권위 단계: advisory v0.1 → preferred v0.5 → authoritative v1.0 (운영 데이터 누적 후 단계적 승격)
+- 다중 경로 폴백: production `/opt/mong/EXPERT_KNOWHOW.md` / 개발 `<repo>/docs/EXPERT_KNOWHOW.md`
+
+**자동 테스트 인프라**
+- `scripts/smoke-test.js` — Playwright-core + CDP로 Electron 골든패스 자동 검증 (로그인 → 첨삭 → 확정 → 마무리 → 측정 탭)
+- 9단계 스크린샷 자동 캡처
+
+**부수 변경**
+- ClientsPage 첨삭 이력 테이블에 outcome 인라인 드롭다운 컬럼
+- ClientsPage 새 첨삭 시작 시 `client.targetPosition` 자동 채움
+- `handleReRevise` 원본 덮어쓰기 버그 수정 (`aiInputContent` 별도 추적, DiffView 기준)
+- 데이터 와이프 (clients/consultings/revisions, training_cases는 보존)
 
 ### v1.1 (2026-04-02): AI 프롬프트 고도화
 - 14개 첨삭 사례 매크로/미시 분석 → 시스템 프롬프트 반영

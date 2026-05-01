@@ -26,6 +26,12 @@ export interface Consulting {
   updatedAt: string;
   // join
   clientName?: string;
+  // Phase 0 측정 지표
+  editRatio?: number;        // first→final 변경률 (0.0-1.0)
+  editBinary?: 0 | 1;        // 컨설턴트가 손댔는가
+  activeTimeSeconds?: number;// 누적 작업 시간(초)
+  outcome?: 'pending' | 'document_passed' | 'document_failed' | 'final_passed' | 'final_failed' | 'unknown';
+  outcomeReceivedAt?: string;
 }
 
 // 첨삭 버전 (초안, 1차, 2차, 최종)
@@ -121,3 +127,24 @@ export const STATUS_LABELS: Record<Consulting['status'], string> = {
   in_progress: '진행중',
   completed: '완료',
 };
+
+// 첨삭 결과 outcome (Phase 0 측정)
+export type Outcome = 'pending' | 'document_passed' | 'document_failed' | 'final_passed' | 'final_failed' | 'unknown';
+
+export const OUTCOME_LABELS: Record<Outcome, { label: string; color: string }> = {
+  pending: { label: '결과 대기', color: 'var(--gray-400)' },
+  document_passed: { label: '서류 통과', color: 'var(--primary)' },
+  document_failed: { label: '서류 탈락', color: 'var(--danger)' },
+  final_passed: { label: '최종 합격', color: 'var(--success)' },
+  final_failed: { label: '최종 탈락', color: 'var(--danger)' },
+  unknown: { label: '모름', color: 'var(--gray-300)' },
+};
+
+export const OUTCOME_OPTIONS: Array<{ value: Outcome; label: string }> = [
+  { value: 'pending', label: '결과 대기' },
+  { value: 'document_passed', label: '서류 통과' },
+  { value: 'document_failed', label: '서류 탈락' },
+  { value: 'final_passed', label: '최종 합격' },
+  { value: 'final_failed', label: '최종 탈락' },
+  { value: 'unknown', label: '모름' },
+];

@@ -24,7 +24,16 @@ rsync -avz --delete \
   --exclude='node_modules' \
   --exclude='.env' \
   --exclude='data/' \
+  --exclude='EXPERT_KNOWHOW.md' \
   ./ $SERVER:$REMOTE_DIR/
+
+# 3b. Copy EXPERT_KNOWHOW.md from project root (advisory layer for AI prompt)
+echo "[3b/5] Copying EXPERT_KNOWHOW.md..."
+if [ -f ../docs/EXPERT_KNOWHOW.md ]; then
+  scp ../docs/EXPERT_KNOWHOW.md $SERVER:$REMOTE_DIR/EXPERT_KNOWHOW.md
+else
+  echo "  WARN: ../docs/EXPERT_KNOWHOW.md not found — advisory layer will be disabled on server"
+fi
 
 # 4. Install dependencies and setup on server
 echo "[4/5] Installing dependencies on server..."

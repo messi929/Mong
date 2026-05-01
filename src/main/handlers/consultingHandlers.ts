@@ -14,6 +14,8 @@ export function registerConsultingHandlers() {
     return result.id;
   });
 
+  ipcMain.handle('consulting:update', (_, id: number, data: any) => api.put(`/consultings/${id}`, data));
+
   ipcMain.handle('consulting:delete', (_, id: number) => api.delete(`/consultings/${id}`));
 
   // Revisions
@@ -26,7 +28,10 @@ export function registerConsultingHandlers() {
     return result.id;
   });
 
+  ipcMain.handle('revision:update', (_, id: number, data: any) => api.put(`/revisions/${id}`, data));
+
   // Dashboard
   ipcMain.handle('dashboard:stats', () => api.get('/dashboard/stats'));
   ipcMain.handle('dashboard:quality', () => api.get('/dashboard/quality'));
+  ipcMain.handle('dashboard:metrics', () => api.get('/dashboard/metrics'));
 }

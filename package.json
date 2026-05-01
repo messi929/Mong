@@ -1,6 +1,6 @@
 {
   "name": "mong-consulting",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "자기소개서/이력서 AI 컨설팅 데스크톱 앱",
   "author": "messi929",
   "repository": "https://github.com/messi929/Mong",
@@ -43,6 +43,7 @@
     "concurrently": "^9.1.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.1.0",
+    "playwright-core": "^1.59.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.0",
@@ -52,7 +53,9 @@
     "appId": "com.mong.consulting",
     "productName": "Mong Consulting",
     "files": [
-      "dist/**/*"
+      "dist/main/**/*",
+      "dist/renderer/**/*",
+      "dist/shared/**/*"
     ],
     "win": {
       "target": [

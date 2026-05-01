@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from './database';
 import { performRevision, performEvaluation, analyzeTrainingPattern, invalidateProfileCache } from './aiEngine';
+import { computeDiffMetrics } from './diffMetrics';
 
 const router = Router();
 
@@ -31,6 +32,11 @@ const toConsulting = (row: any) => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   clientName: row.client_name,
+  editRatio: row.edit_ratio,
+  editBinary: row.edit_binary,
+  activeTimeSeconds: row.active_time_seconds,
+  outcome: row.outcome,
+  outcomeReceivedAt: row.outcome_received_at,
 });
 
 const toRevision = (row: any) => ({
@@ -159,6 +165,47 @@ router.post('/consultings', (req: Request, res: Response) => {
   res.json({ id: result.lastInsertRowid });
 });
 
+router.put('/consultings/:id', (req: Request, res: Response) => {
+  const data = req.body;
+  const db = getDb();
+
+  db.prepare(`
+    UPDATE consultings SET
+      company_name = COALESCE(?, company_name),
+      position = COALESCE(?, position),
+      job_posting = ?,
+      status = COALESCE(?, status),
+      updated_at = datetime('now', 'localtime')
+    WHERE id = ?
+  `).run(
+    data.companyName ?? null,
+    data.position ?? null,
+    data.jobPosting ?? null,
+    data.status ?? null,
+    req.params.id
+  );
+
+  // active_time_seconds 델타 누적
+  if (typeof data.addActiveSeconds === 'number' && data.addActiveSeconds > 0) {
+    db.prepare(`
+      UPDATE consultings
+      SET active_time_seconds = COALESCE(active_time_seconds, 0) + ?
+      WHERE id = ?
+    `).run(Math.round(data.addActiveSeconds), req.params.id);
+  }
+
+  // outcome 갱신
+  if (data.outcome) {
+    db.prepare(`
+      UPDATE consultings
+      SET outcome = ?, outcome_received_at = datetime('now', 'localtime')
+      WHERE id = ?
+    `).run(data.outcome, req.params.id);
+  }
+
+  res.json({ ok: true });
+});
+
 router.delete('/consultings/:id', (req: Request, res: Response) => {
   getDb().prepare('DELETE FROM consultings WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
@@ -173,6 +220,25 @@ router.get('/revisions', (req: Request, res: Response) => {
   `).all(consultingId);
   res.json(rows.map(toRevision));
 });
+
+// final revision 저장 시 latest first vs final로 메트릭 계산하여 consultings에 반영.
+// first revision이 없으면 메트릭은 NULL로 둠.
+function recomputeFinalMetrics(consultingId: number, finalContent: string): void {
+  const db = getDb();
+  const lastFirst = db.prepare(`
+    SELECT content FROM revisions
+    WHERE consulting_id = ? AND stage = 'first'
+    ORDER BY id DESC LIMIT 1
+  `).get(consultingId) as { content: string } | undefined;
+
+  if (!lastFirst) return;
+
+  const { editRatio, editBinary } = computeDiffMetrics(lastFirst.content, finalContent);
+  db.prepare(`
+    UPDATE consultings SET edit_ratio = ?, edit_binary = ?, updated_at = datetime('now', 'localtime')
+    WHERE id = ?
+  `).run(editRatio, editBinary, consultingId);
+}
 
 router.post('/revisions', (req: Request, res: Response) => {
   const data = req.body;
@@ -190,7 +256,37 @@ router.post('/revisions', (req: Request, res: Response) => {
     UPDATE consultings SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?
   `).run(newStatus, data.consultingId);
 
+  if (data.stage === 'final') {
+    recomputeFinalMetrics(data.consultingId, data.content);
+  }
+
   res.json({ id: result.lastInsertRowid });
+});
+
+router.put('/revisions/:id', (req: Request, res: Response) => {
+  const data = req.body;
+  getDb().prepare(`
+    UPDATE revisions SET
+      content = COALESCE(?, content),
+      comments = ?,
+      evaluation = ?
+    WHERE id = ?
+  `).run(
+    data.content ?? null,
+    data.comments ? JSON.stringify(data.comments) : null,
+    data.evaluation ? JSON.stringify(data.evaluation) : null,
+    req.params.id
+  );
+
+  // final이 갱신되면 메트릭 재계산
+  if (data.content) {
+    const row = getDb().prepare('SELECT consulting_id, stage FROM revisions WHERE id = ?').get(req.params.id) as any;
+    if (row && row.stage === 'final') {
+      recomputeFinalMetrics(row.consulting_id, data.content);
+    }
+  }
+
+  res.json({ ok: true });
 });
 
 // ============ AI Revision ============
@@ -480,6 +576,93 @@ router.get('/dashboard/stats', (_req: Request, res: Response) => {
     completed,
     thisMonthConsultings: thisMonth,
     recentConsultings: recent,
+  });
+});
+
+router.get('/dashboard/metrics', (_req: Request, res: Response) => {
+  const db = getDb();
+
+  const counts = db.prepare(`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'completed') AS total_completed,
+      COUNT(*) FILTER (WHERE status = 'completed' AND outcome = 'pending') AS pending_outcome,
+      COUNT(*) FILTER (WHERE status = 'completed' AND outcome = 'pending'
+                        AND julianday('now') - julianday(updated_at) > 30) AS pending_overdue
+    FROM consultings
+  `).get() as any;
+
+  // edit metrics — 완료된 컨설팅만, edit_ratio가 NULL이 아닌 것
+  const editAvg = (window: string) => {
+    const filter = window === '30d'
+      ? "AND julianday('now') - julianday(updated_at) <= 30"
+      : '';
+    return db.prepare(`
+      SELECT
+        AVG(edit_ratio) AS avg_ratio,
+        AVG(CASE WHEN edit_binary = 0 THEN 1.0 ELSE 0.0 END) AS untouched_rate,
+        AVG(active_time_seconds) AS avg_active_time,
+        COUNT(*) AS sample_size
+      FROM consultings
+      WHERE status = 'completed' AND edit_ratio IS NOT NULL ${filter}
+    `).get() as any;
+  };
+
+  const m30 = editAvg('30d');
+  const mAll = editAvg('all');
+
+  const outcomeRows = db.prepare(`
+    SELECT outcome, COUNT(*) AS cnt
+    FROM consultings
+    WHERE status = 'completed'
+    GROUP BY outcome
+  `).all() as any[];
+
+  const outcomeDistribution: Record<string, number> = {
+    pending: 0, document_passed: 0, document_failed: 0,
+    final_passed: 0, final_failed: 0, unknown: 0,
+  };
+  for (const r of outcomeRows) {
+    if (r.outcome && outcomeDistribution.hasOwnProperty(r.outcome)) {
+      outcomeDistribution[r.outcome] = r.cnt;
+    }
+  }
+
+  const recent = db.prepare(`
+    SELECT c.*, cl.name AS client_name,
+      CAST(julianday('now') - julianday(c.updated_at) AS INTEGER) AS days_since_finalized
+    FROM consultings c
+    JOIN clients cl ON c.client_id = cl.id
+    WHERE c.status = 'completed'
+    ORDER BY c.updated_at DESC
+    LIMIT 20
+  `).all().map((row: any) => ({
+    id: row.id,
+    clientId: row.client_id,
+    clientName: row.client_name,
+    companyName: row.company_name,
+    position: row.position,
+    finalizedAt: row.updated_at,
+    editRatio: row.edit_ratio,
+    editBinary: row.edit_binary,
+    activeTimeSeconds: row.active_time_seconds,
+    outcome: row.outcome,
+    daysSinceFinalized: row.days_since_finalized,
+  }));
+
+  res.json({
+    totalCompleted: counts.total_completed,
+    pendingOutcome: counts.pending_outcome,
+    pendingOutcomeOverdue: counts.pending_overdue,
+    editRatioAvg30d: m30.avg_ratio,
+    editRatioAvgAll: mAll.avg_ratio,
+    untouchedRate30d: m30.untouched_rate,
+    untouchedRateAll: mAll.untouched_rate,
+    avgActiveTimeSeconds30d: m30.avg_active_time,
+    avgActiveTimeSecondsAll: mAll.avg_active_time,
+    sampleSize30d: m30.sample_size,
+    sampleSizeAll: mAll.sample_size,
+    outcomeDistribution,
+    recent,
   });
 });
 

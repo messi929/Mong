@@ -25,11 +25,13 @@ contextBridge.exposeInMainWorld('api', {
   getConsultings: (clientId?: number) => ipcRenderer.invoke('consulting:getAll', clientId),
   getConsulting: (id: number) => ipcRenderer.invoke('consulting:get', id),
   createConsulting: (data: any) => ipcRenderer.invoke('consulting:create', data),
+  updateConsulting: (id: number, data: any) => ipcRenderer.invoke('consulting:update', id, data),
   deleteConsulting: (id: number) => ipcRenderer.invoke('consulting:delete', id),
 
   // 첨삭 버전
   getRevisions: (consultingId: number) => ipcRenderer.invoke('revision:getAll', consultingId),
   createRevision: (data: any) => ipcRenderer.invoke('revision:create', data),
+  updateRevision: (id: number, data: any) => ipcRenderer.invoke('revision:update', id, data),
 
   // AI 첨삭
   requestRevision: (data: any) => ipcRenderer.invoke('ai:revise', data),
@@ -55,4 +57,5 @@ contextBridge.exposeInMainWorld('api', {
   // 대시보드
   getDashboardStats: () => ipcRenderer.invoke('dashboard:stats'),
   getQualityStats: () => ipcRenderer.invoke('dashboard:quality'),
+  getDashboardMetrics: () => ipcRenderer.invoke('dashboard:metrics'),
 });

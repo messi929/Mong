@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import ClientForm from '../components/ClientForm';
 import TrainingDataPanel from '../components/TrainingDataPanel';
 import type { NavigationContext } from '../App';
-import type { Client, Consulting } from '../../shared/types';
+import type { Client, Consulting, Outcome } from '../../shared/types';
+import { OUTCOME_LABELS, OUTCOME_OPTIONS } from '../../shared/types';
 
 const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
   draft: { cls: 'badge-draft', label: '초안' },
@@ -91,6 +92,16 @@ export default function ClientsPage({ nav, initialClientId }: Props) {
 
   const handleConsultingClick = (consulting: Consulting) => {
     nav.goToConsulting(consulting.clientId, consulting.id);
+  };
+
+  const handleOutcomeChange = async (consultingId: number, outcome: Outcome) => {
+    try {
+      await window.api.updateConsulting(consultingId, { outcome });
+      if (selectedClient) {
+        const data = await window.api.getConsultings(selectedClient.id);
+        setConsultings(data);
+      }
+    } catch { /* 무시 */ }
   };
 
   const handleStartConsulting = () => {
@@ -197,17 +208,34 @@ export default function ClientsPage({ nav, initialClientId }: Props) {
               ) : (
                 <table className="table">
                   <thead>
-                    <tr><th>날짜</th><th>회사명</th><th>직무</th><th>상태</th><th></th></tr>
+                    <tr><th>날짜</th><th>회사명</th><th>직무</th><th>상태</th><th>결과</th><th></th></tr>
                   </thead>
                   <tbody>
                     {consultings.map((c) => {
                       const badge = STATUS_BADGE[c.status] || STATUS_BADGE.draft;
+                      const outcome = (c.outcome || 'pending') as Outcome;
+                      const outcomeColor = OUTCOME_LABELS[outcome].color;
                       return (
                         <tr key={c.id}>
                           <td>{c.createdAt?.slice(0, 10)}</td>
                           <td>{c.companyName}</td>
                           <td>{c.position}</td>
                           <td><span className={`badge ${badge.cls}`}>{badge.label}</span></td>
+                          <td>
+                            {c.status === 'completed' ? (
+                              <select
+                                value={outcome}
+                                onChange={(e) => handleOutcomeChange(c.id, e.target.value as Outcome)}
+                                style={{ fontSize: '12px', padding: '2px 4px', color: outcomeColor }}
+                              >
+                                {OUTCOME_OPTIONS.map(opt => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span style={{ color: 'var(--gray-300)', fontSize: '12px' }}>-</span>
+                            )}
+                          </td>
                           <td>
                             <div style={{ display: 'flex', gap: '4px' }}>
                               <button className="btn btn-sm btn-secondary" onClick={() => handleConsultingClick(c)}>

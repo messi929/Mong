@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
+import fs from 'fs';
+import path from 'path';
 import { getDb } from './database';
 
 let client: Anthropic | null = null;
@@ -88,6 +90,64 @@ export function invalidateProfileCache() {
   profileLoadedAt = 0;
 }
 
+// ===== 전문가 노하우 로드 (파일, 5분 캐시) =====
+// 환경별로 파일이 다른 위치에 있을 수 있어 후보 경로를 순서대로 시도.
+// 프로덕션(Hetzner): /opt/mong/EXPERT_KNOWHOW.md (deploy 스크립트가 복사)
+// 로컬 개발: <repo>/docs/EXPERT_KNOWHOW.md
+const KNOWHOW_PATHS = [
+  path.join(__dirname, '..', 'EXPERT_KNOWHOW.md'),
+  path.join(__dirname, '..', '..', 'docs', 'EXPERT_KNOWHOW.md'),
+];
+
+let cachedKnowhow: string | null = null;
+let knowhowLoadedAt = 0;
+let knowhowMissingLogged = false;
+
+function loadExpertKnowhow(): string {
+  const now = Date.now();
+  if (cachedKnowhow !== null && now - knowhowLoadedAt < 300000) {
+    return cachedKnowhow;
+  }
+  for (const p of KNOWHOW_PATHS) {
+    try {
+      const raw = fs.readFileSync(p, 'utf-8');
+      cachedKnowhow = raw;
+      knowhowLoadedAt = now;
+      knowhowMissingLogged = false;
+      return raw;
+    } catch { /* 다음 후보 */ }
+  }
+  if (!knowhowMissingLogged) {
+    console.warn(`[aiEngine] EXPERT_KNOWHOW.md not found in any of: ${KNOWHOW_PATHS.join(', ')} — knowhow advisory layer disabled`);
+    knowhowMissingLogged = true;
+  }
+  cachedKnowhow = '';
+  knowhowLoadedAt = now;
+  return '';
+}
+
+// advisory 권위로 시스템 프롬프트 끝에 부착되는 형식.
+// v0.5/v1.0 승격 시 이 함수만 수정하면 된다.
+function formatKnowhowForPrompt(): string {
+  const body = loadExpertKnowhow();
+  if (!body.trim()) return '';
+  return `
+
+=== 컨설턴트 일반 원칙 (advisory v0.1) ===
+
+다음은 본 시스템을 운영하는 컨설턴트가 직접 작성한 판단 프레임워크입니다.
+
+[권위 수준: advisory]
+- 위에 정의된 룰(스타일 프로파일, 매크로/미시 규칙)과 *충돌하면 기존 룰을 우선* 적용합니다.
+- 단, 충돌 사실을 \`comments\`에 기록합니다. 형식: "원칙 충돌: [원칙 X] vs [기존 룰 Y] — 기존 룰 적용".
+- 충돌이 없으면 아래 원칙을 추가 지침으로 활용합니다.
+
+${body}
+
+=== 컨설턴트 일반 원칙 끝 ===
+`;
+}
+
 const STAGE_LABELS: Record<string, string> = {
   draft: '초안',
   first: '1차 첨삭',
@@ -95,7 +155,9 @@ const STAGE_LABELS: Record<string, string> = {
   final: '최종',
 };
 
-const REVISION_INSTRUCTION = `자기소개서를 종합적으로 첨삭해주세요. 구조 개편부터 단어 하나하나의 어조까지 모두 수행합니다.
+const REVISION_INSTRUCTION = `자기소개서를 진단하고, *개선이 필요한 부분만* 첨삭해주세요.
+원문이 이미 우리 기준을 충족하면 손대지 말고, 부분 충족이면 미충족 부분만 정밀하게 수정합니다.
+아래는 첨삭이 필요한 경우의 적용 항목입니다.
 
 [구조 개편]
 - 각 문항에 [행동/기술 + 정량 성과] 형식의 소제목을 삽입하세요
@@ -214,6 +276,47 @@ export async function performRevision(request: RevisionRequest) {
   const systemPrompt = `당신은 대한민국 최고 수준의 자기소개서/이력서 컨설턴트입니다.
 수백 명의 취업 컨설팅 경험을 바탕으로, 한 글자·한 단어의 어조와 어감까지 중시하는 정밀한 첨삭을 수행합니다.
 ${styleProfile}
+
+=== 최우선 판단: 수정이 필요한가 ===
+원문을 받으면 *먼저* 품질을 평가하고, 충족하면 수정하지 않습니다.
+
+[수정 불필요 신호 — 대부분 충족 시 원문 보존]
+- 도입부 첫 3줄에 일반론("빠르게 변화하는", "어릴 적부터") 없음 + 수치·상황·직무 정의로 시작
+- 모든 문항에 [행동/기술 + 정량성과] 형식 소제목
+- JD 핵심 동사·키워드가 도입부와 마무리에 자연스럽게 박혀 있음
+- 정량 수치가 Before→After 또는 비교 형태 ("9분→4분", "12% 단축")
+- 종결 어미 격식체 통일 ("했습니다", "기여하겠습니다")
+- 평균 회귀 단어("열정", "도전", "성장", "주도적", "혁신") 거의 없음
+- 한 문항당 에피소드 1개 집중 (나열 아님)
+- 감정 과잉 서술, 미사여구, 자기 PR 선언 없음
+
+→ 위 신호가 대부분 충족되면 \`revisedContent\`에 원문을 거의 그대로 반환합니다. 맞춤법·띄어쓰기 정도만 교정하고, \`comments\`는 1~3개로 최소화하며 "원문 품질 우수, 큰 수정 불필요"를 명시합니다. \`evaluation\`은 4~5점.
+
+→ 부분 충족 시 미충족 부분만 핀포인트 수정합니다. 이미 좋은 부분은 절대 건드리지 마세요. (예: "첫 문항은 우수, 2번 문항만 수정")
+
+이 원칙은 아래의 모든 첨삭 룰보다 우선합니다. *불필요한 수정은 품질 저하*입니다.
+
+=== 최우선 원칙: 사람이 쓴 글처럼 ===
+첨삭 결과물이 *AI가 다듬은 흔적*을 남기면 안 됩니다. 채용담당자가 "GPT 같다"는 인상을 받으면 즉시 신뢰도가 떨어집니다.
+
+[AI 같은 느낌의 신호 — 회피]
+- 모든 문장이 비슷한 길이로 정렬됨 (사람의 글은 짧고 긴 리듬이 섞임)
+- "이를 통해", "다음과 같은", "결과적으로", "특히 ~한 점에서" 같은 형식적 연결어 빈출
+- 모든 문단이 도입-본론-결론 균형 잡힘 (사람의 글은 강조 분배가 불균형)
+- 추상명사 위주 표현 ("성장과 도전의 기회")
+- 감정 평탄화: 인상적 사건도 같은 어조로 서술
+- 개성 없는 격식체 ("말씀드리고 싶습니다", "역량을 발휘하겠습니다")
+- 모든 결론이 "~하겠습니다"로 매끄럽게 마무리
+
+[사람의 글로 만들기]
+- *원문 작성자의 어휘 선택을 보존*. 본인이 쓴 단어를 다른 단어로 바꾸지 마세요. 단, 평균 회귀 단어와 부적절 어휘는 예외.
+- 문장 길이를 일부러 흐트러트림. 긴 문장 옆에 짧은 문장 배치.
+- 첨삭한 부분의 톤이 *주변 원문 톤과 일치*하도록. 일부만 매끈해지면 어색함.
+- 약간의 *불완전함* 허용. 너무 매끄러운 결론보다 살짝 거친 마무리가 더 사람 같음.
+- 작성자만 알 만한 디테일(구체적 숫자, 고유 명칭, 의외성)을 *반드시 보존*. 이게 사람의 흔적입니다.
+- "사람이 입으로 말할 법한 표현" 우선. 자연스럽게 읽히는 어조 > 종이용 격식체.
+
+이 원칙은 아래 모든 첨삭 룰에 우선 적용됩니다. 어떤 룰이 결과물을 AI스럽게 만들면 그 룰을 *적용하지 마세요*.
 
 === 최상위 원칙: JD를 자소서의 뼈대로 이식하라 ===
 공고(JD)에서 요구하는 역량/키워드를 자소서의 소제목, 도입부, 마무리 문장에 직접 삽입하여,
@@ -335,7 +438,8 @@ overall 작성 예시:
 [논리성 4/5] STAR 구조가 잘 갖춰져 있습니다. 다만 2번 문항의 '행동→결과' 연결이 약합니다. 어떤 행동이 어떤 결과로 이어졌는지 인과관계를 명확히 하세요.
 [직무연관성 2/5] JD에서 요구하는 '데이터 분석' 역량이 자소서에 거의 드러나지 않습니다. 관련 경험이 있다면 추가하고, 마무리 문장에 JD 키워드를 반영하세요.
 [차별성 3/5] 경험 자체는 독특하나, 표현이 일반적입니다. '저만의 KPI를 설정했다' 같은 고유한 행동을 부각하세요.
-[표현력 3/5] 구어체 표현이 다수 남아있습니다. '잡는→해결하는', '느꼈고→배웠습니다' 등 격식체로 전환하세요."`;
+[표현력 3/5] 구어체 표현이 다수 남아있습니다. '잡는→해결하는', '느꼈고→배웠습니다' 등 격식체로 전환하세요."
+${formatKnowhowForPrompt()}`;
 
   const userPrompt = `${REVISION_INSTRUCTION}
 

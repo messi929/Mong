@@ -19,6 +19,13 @@ interface VersionEntry {
   timestamp: string;
 }
 
+interface RevisionIds {
+  draft?: number;
+  first?: number;
+  second?: number;
+  final?: number;
+}
+
 interface Props {
   nav: NavigationContext;
   clients: Client[];
@@ -43,6 +50,7 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
 
   // ===== 콘텐츠 =====
   const [originalContent, setOriginalContent] = useState('');
+  const [aiInputContent, setAiInputContent] = useState(''); // 가장 최근 AI 입력 — diff 기준
   const [revisedContent, setRevisedContent] = useState('');
   const [editedContent, setEditedContent] = useState('');
   const [comments, setComments] = useState<RevisionComment[]>([]);
@@ -50,7 +58,7 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
   const [beforeEvaluation, setBeforeEvaluation] = useState<Evaluation | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
 
-  // ===== UI 상태 =====
+  // ===== UI/저장 상태 =====
   const [phase, setPhase] = useState<Phase>('input');
   const [isLoading, setIsLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'diff' | 'result' | 'edit'>('diff');
@@ -59,19 +67,35 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [consultingId, setConsultingId] = useState<number | undefined>();
-  const [isSaved, setIsSaved] = useState(false);
+  const [revisionIds, setRevisionIds] = useState<RevisionIds>({});
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+
+  // ===== 학습 등록 =====
+  const [addToTraining, setAddToTraining] = useState(false);
+  const [isFinalized, setIsFinalized] = useState(false);
 
   // ===== 버전 이력 =====
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [activeVersion, setActiveVersion] = useState(-1);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // active time 추적: 첫 활동 후부터, 2분 idle 임계 적용
+  const lastActivityRef = useRef<number | null>(null);
+  const lastTickRef = useRef<number>(Date.now());
+  const pendingActiveDeltaRef = useRef<number>(0);
+  // setState는 비동기라 같은 콜백 내 후속 호출에서 최신 값을 못 봄.
+  // ensureConsulting → saveRevisionStage 경로에서 race를 막기 위해 ref로 즉시 동기화.
+  const consultingIdRef = useRef<number | undefined>(undefined);
+  const revisionIdsRef = useRef<RevisionIds>({});
+
   const selectedClient = clients.find(c => c.id === clientId);
   const filteredClients = clientSearch.trim()
     ? clients.filter(c => c.name.includes(clientSearch) || (c.targetIndustry || '').includes(clientSearch) || (c.targetPosition || '').includes(clientSearch))
     : clients;
 
   const hasEdits = editedContent.trim() !== '' && editedContent !== revisedContent;
+  const hasConsultantEdit = versions.some(v => v.type === 'consultant');
+  const diffOriginal = aiInputContent || originalContent;
 
   // 드롭다운 외부 클릭 닫기
   useEffect(() => {
@@ -82,9 +106,60 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // active time 추적: 첫 활동 후부터 10초마다 누적, 마지막 활동에서 2분 넘게 지났으면 idle로 제외
+  useEffect(() => {
+    const onActivity = () => { lastActivityRef.current = Date.now(); };
+    const events: (keyof WindowEventMap)[] = ['mousedown', 'keydown', 'scroll'];
+    events.forEach(e => window.addEventListener(e, onActivity, { passive: true } as any));
+
+    const tick = setInterval(() => {
+      const now = Date.now();
+      if (lastActivityRef.current !== null) {
+        const sinceActivity = now - lastActivityRef.current;
+        if (sinceActivity < 120_000) {
+          pendingActiveDeltaRef.current += (now - lastTickRef.current) / 1000;
+        }
+      }
+      lastTickRef.current = now;
+    }, 10_000);
+
+    return () => {
+      clearInterval(tick);
+      events.forEach(e => window.removeEventListener(e, onActivity));
+    };
+  }, []);
+
+  // 60초마다 누적 active time을 서버로 flush (필드 변경 없을 때 백업)
+  useEffect(() => {
+    if (!consultingId) return;
+    const interval = setInterval(async () => {
+      const delta = pendingActiveDeltaRef.current;
+      if (delta < 30) return;
+      pendingActiveDeltaRef.current = 0;
+      try {
+        await window.api.updateConsulting(consultingId, { addActiveSeconds: delta });
+      } catch {
+        pendingActiveDeltaRef.current += delta;
+      }
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, [consultingId]);
+
   useEffect(() => {
     if (selectedClient) setClientMemo(selectedClient.memo || '');
   }, [clientId]);
+
+  // ref 동기화 (state 변경 시 즉시 반영)
+  useEffect(() => { consultingIdRef.current = consultingId; }, [consultingId]);
+  useEffect(() => { revisionIdsRef.current = revisionIds; }, [revisionIds]);
+
+  // 새 첨삭 시작 시 client.targetPosition 자동 채움 (기존 컨설팅 로드 아닐 때만, 1회성)
+  useEffect(() => {
+    if (initialConsultingId) return;
+    if (!selectedClient) return;
+    if (position.trim()) return;
+    if (selectedClient.targetPosition) setPosition(selectedClient.targetPosition);
+  }, [selectedClient, initialConsultingId]);
 
   // 과거 첨삭 이력 불러오기
   useEffect(() => {
@@ -93,6 +168,7 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
       try {
         const consulting = await window.api.getConsulting(initialConsultingId);
         if (!consulting) return;
+        consultingIdRef.current = initialConsultingId;
         setConsultingId(initialConsultingId);
         setClientId(consulting.clientId);
         setCompanyName(consulting.companyName);
@@ -102,35 +178,48 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
         const revisions = await window.api.getRevisions(initialConsultingId);
         if (revisions.length > 0) {
           const draft = revisions.find((r: any) => r.stage === 'draft');
-          const final = revisions.find((r: any) => r.stage === 'final') || revisions.find((r: any) => r.stage === 'first');
+          const firsts = revisions.filter((r: any) => r.stage === 'first');
+          const lastFirst = firsts.length > 0 ? firsts[firsts.length - 1] : undefined;
+          const seconds = revisions.filter((r: any) => r.stage === 'second');
+          const lastSecond = seconds.length > 0 ? seconds[seconds.length - 1] : undefined;
+          const final = revisions.find((r: any) => r.stage === 'final');
+
+          const ids: RevisionIds = {};
+          if (draft) ids.draft = draft.id;
+          if (lastFirst) ids.first = lastFirst.id;
+          if (lastSecond) ids.second = lastSecond.id;
+          if (final) ids.final = final.id;
+          revisionIdsRef.current = ids;
+          setRevisionIds(ids);
 
           if (draft) {
             setOriginalContent(draft.content);
+            setAiInputContent(draft.content);
             addVersion('original', '원본', draft.content);
           }
-          if (final) {
-            setRevisedContent(final.content);
-            setEditedContent(final.content);
-            if (final.comments) {
-              try { setComments(JSON.parse(final.comments)); } catch {}
-            }
-            if (final.evaluation) {
-              try { setEvaluation(JSON.parse(final.evaluation)); setShowEval(true); } catch {}
-            }
-            addVersion('ai', 'AI 첨삭', final.content,
-              final.comments ? JSON.parse(final.comments) : undefined,
-              final.evaluation ? JSON.parse(final.evaluation) : undefined);
+          if (lastFirst) {
+            const cmt = lastFirst.comments ? safeParse(lastFirst.comments) : undefined;
+            const ev = lastFirst.evaluation ? safeParse(lastFirst.evaluation) : undefined;
+            setRevisedContent(lastFirst.content);
+            setEditedContent(lastFirst.content);
+            if (cmt) setComments(cmt);
+            if (ev) { setEvaluation(ev); setShowEval(true); }
+            addVersion('ai', 'AI 첨삭', lastFirst.content, cmt, ev);
             setPhase('review');
           }
-
-          // 컨설턴트 수정본
-          const consultant = revisions.find((r: any) => r.stage === 'second');
-          if (consultant) {
-            addVersion('consultant', '컨설턴트 수정', consultant.content);
-            setEditedContent(consultant.content);
+          if (lastSecond) {
+            setEditedContent(lastSecond.content);
+            addVersion('consultant', '컨설턴트 수정', lastSecond.content);
+          }
+          if (final) {
+            setEditedContent(final.content);
+            setRevisedContent(final.content);
+            addVersion('confirmed', '최종 확정', final.content);
+            setPhase('confirmed');
+            setViewMode('result');
           }
 
-          setIsSaved(true);
+          setAutoSaveStatus('saved');
           showSuccess('이전 첨삭 이력을 불러왔습니다.');
         }
       } catch (err: any) {
@@ -139,9 +228,86 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
     })();
   }, [initialConsultingId]);
 
-  // ===== 메시지 =====
+  // 컨설팅 필드 변경 → 디바운스 저장 (active time 델타 동봉)
+  useEffect(() => {
+    if (!consultingId) return;
+    const t = setTimeout(async () => {
+      const delta = pendingActiveDeltaRef.current;
+      pendingActiveDeltaRef.current = 0;
+      try {
+        setAutoSaveStatus('saving');
+        const payload: any = { companyName, position, jobPosting };
+        if (delta > 0) payload.addActiveSeconds = delta;
+        await window.api.updateConsulting(consultingId, payload);
+        setAutoSaveStatus('saved');
+      } catch {
+        pendingActiveDeltaRef.current += delta;
+        setAutoSaveStatus('idle');
+      }
+    }, 800);
+    return () => clearTimeout(t);
+  }, [consultingId, companyName, position, jobPosting]);
+
+  // 컨설턴트 수정 → 디바운스 저장 (second revision)
+  useEffect(() => {
+    if (!consultingId) return;
+    if (phase !== 'review') return;
+    if (!hasEdits) return;
+    const t = setTimeout(async () => {
+      try {
+        setAutoSaveStatus('saving');
+        await saveRevisionStage('second', editedContent);
+        setAutoSaveStatus('saved');
+      } catch { setAutoSaveStatus('idle'); }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [editedContent, consultingId, phase, hasEdits]);
+
+  // ===== 헬퍼 =====
+  const safeParse = (s: string) => { try { return JSON.parse(s); } catch { return undefined; } };
   const showError = (msg: string) => { setErrorMsg(msg); setTimeout(() => setErrorMsg(''), 3000); };
   const showSuccess = (msg: string) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(''), 3000); };
+
+  const ensureConsulting = async (): Promise<number | undefined> => {
+    if (consultingIdRef.current) return consultingIdRef.current;
+    if (!clientId) { showError('고객을 선택하거나 새로 등록해주세요.'); return undefined; }
+    if (!companyName.trim() || !position.trim()) { showError('회사명과 직무를 입력해주세요.'); return undefined; }
+    try {
+      const id = await window.api.createConsulting({
+        clientId, companyName, position, jobPosting, status: 'draft',
+      });
+      consultingIdRef.current = id; // ref 즉시 동기화 (이후 같은 콜백 내 saveRevisionStage가 보게)
+      setConsultingId(id);
+      return id;
+    } catch (err: any) {
+      showError('컨설팅 생성 실패: ' + (err.message || ''));
+      return undefined;
+    }
+  };
+
+  // 단계별 저장: 기존 ID 있으면 업데이트, 없으면 생성. 'first'는 재첨삭마다 새 row 생성하기 위해 forceCreate 사용.
+  // ref 기반으로 읽어 같은 콜백 내 setState race를 회피.
+  const saveRevisionStage = async (
+    stage: 'draft' | 'first' | 'second' | 'final',
+    content: string,
+    cmt?: RevisionComment[],
+    ev?: Evaluation | null,
+    forceCreate = false
+  ) => {
+    const cId = consultingIdRef.current;
+    if (!cId) return;
+
+    const existingId = revisionIdsRef.current[stage];
+    if (existingId && !forceCreate) {
+      await window.api.updateRevision(existingId, { content, comments: cmt, evaluation: ev });
+    } else {
+      const newId = await window.api.createRevision({
+        consultingId: cId, stage, content, comments: cmt, evaluation: ev,
+      });
+      revisionIdsRef.current = { ...revisionIdsRef.current, [stage]: newId };
+      setRevisionIds(prev => ({ ...prev, [stage]: newId }));
+    }
+  };
 
   // ===== 파일 처리 =====
   const handleFileUpload = async () => {
@@ -179,14 +345,36 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
     } catch (err: any) { showError(err.message || '파일을 열 수 없습니다.'); }
   };
 
-  // ===== 고객 생성 (인라인) =====
+  // ===== 인라인 고객 등록 =====
   const handleCreateClient = async () => {
     if (!newClientName.trim()) return;
     try {
-      const id = await window.api.createClient({ name: newClientName, targetIndustry: '', targetPosition: position || '' });
+      const id = await window.api.createClient({
+        name: newClientName,
+        targetPosition: position || undefined,
+      });
       await onClientsChange();
-      setClientId(id); setNewClientName(''); setShowNewClient(false); setShowClientDropdown(false);
-      showSuccess(`"${newClientName}" 고객이 등록되었습니다.`);
+      setClientId(id);
+      setNewClientName('');
+      setShowNewClient(false);
+      setShowClientDropdown(false);
+
+      // 회사/직무가 채워져 있으면 곧장 draft Consulting 생성 (이력에 즉시 반영)
+      if (companyName.trim() && position.trim()) {
+        try {
+          const cId = await window.api.createConsulting({
+            clientId: id, companyName, position, jobPosting, status: 'draft',
+          });
+          consultingIdRef.current = cId;
+          setConsultingId(cId);
+          setAutoSaveStatus('saved');
+          showSuccess(`"${newClientName}" 등록 + 첨삭 자동 저장 시작.`);
+        } catch {
+          showSuccess(`"${newClientName}" 고객이 등록되었습니다.`);
+        }
+      } else {
+        showSuccess(`"${newClientName}" 고객이 등록되었습니다.`);
+      }
     } catch { showError('고객 생성 실패'); }
   };
 
@@ -200,14 +388,22 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
   const handleRevise = async (contentOverride?: string) => {
     if (!originalContent.trim() && !contentOverride) { showError('자기소개서를 입력해주세요.'); return; }
     if (!companyName.trim() || !position.trim()) { showError('회사명과 직무를 입력해주세요.'); return; }
+    if (!clientId) { showError('고객을 선택하거나 새로 등록해주세요.'); return; }
+
+    const cId = await ensureConsulting();
+    if (!cId) return;
 
     setIsLoading(true); setErrorMsg('');
 
     try {
       const contentToRevise = contentOverride || originalContent;
 
-      // 첫 첨삭 시 원본 기록
-      if (versions.length === 0) addVersion('original', '원본', originalContent);
+      // 첫 첨삭 시 원본 저장 + 메모리 이력
+      if (versions.length === 0) {
+        addVersion('original', '원본', originalContent);
+        await saveRevisionStage('draft', originalContent);
+      }
+      setAiInputContent(contentToRevise);
 
       const result: RevisionResponse = await window.api.requestRevision({
         originalContent: contentToRevise, stage: 'first',
@@ -221,20 +417,24 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
       setShowEval(true);
       setViewMode('diff');
       setPhase('review');
-      setIsSaved(false);
 
       addVersion('ai', 'AI 첨삭', result.revisedContent, result.comments, result.evaluation);
+
+      // first revision은 재첨삭마다 새 row (학습/이력 추적용)
+      await saveRevisionStage('first', result.revisedContent, result.comments, result.evaluation, true);
+      setAutoSaveStatus('saved');
     } catch (err: any) {
       showError(err.message || '첨삭에 실패했습니다.');
     } finally { setIsLoading(false); }
   };
 
-  // ===== 확정: 현재 내용을 최종으로 + 재평가 =====
+  // ===== 확정 =====
   const handleConfirm = async () => {
     const finalContent = hasEdits ? editedContent : revisedContent;
 
     if (hasEdits) {
       addVersion('consultant', '컨설턴트 수정', editedContent);
+      try { await saveRevisionStage('second', editedContent); } catch { /* 무시 */ }
     }
     addVersion('confirmed', '최종 확정', finalContent);
 
@@ -244,71 +444,62 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
     setEditedContent(finalContent);
     setShowEval(true);
 
+    try {
+      await saveRevisionStage('final', finalContent);
+      setAutoSaveStatus('saved');
+    } catch { /* 저장 실패해도 UI는 확정 상태 유지 */ }
+
+    // 학습 토글 기본값: 컨설턴트 수정이 있을 때만 ON (AI→AI 순환 방지)
+    setAddToTraining(hasEdits || versions.some(v => v.type === 'consultant'));
+
     // 최종본 재평가 (원본 대비)
-    setBeforeEvaluation(evaluation); // 기존 AI 평가를 "before"로
+    setBeforeEvaluation(evaluation);
     setIsEvaluating(true);
     try {
       const origContent = versions.find(v => v.type === 'original')?.content || originalContent;
       const result = await window.api.requestEvaluation({
         content: finalContent,
-        companyName,
-        position,
-        jobPosting,
+        companyName, position, jobPosting,
         originalContent: origContent,
       });
       setEvaluation(result);
-      showSuccess('확정 + 재평가 완료. "저장"을 눌러 이력에 기록하세요.');
-    } catch (err: any) {
-      showSuccess('확정되었습니다. (재평가 실패 — 기존 평가를 유지합니다)');
+      showSuccess('확정 완료. 학습 등록 여부를 정한 뒤 "마무리"를 눌러주세요.');
+    } catch {
+      showSuccess('확정되었습니다. (재평가 실패 — 기존 평가 유지)');
     } finally {
       setIsEvaluating(false);
     }
   };
 
-  // ===== AI 재첨삭 요청: 수정본을 AI에게 다시 =====
+  // ===== AI 재첨삭 =====
   const handleReRevise = () => {
     if (!hasEdits) { showError('수정한 내용이 없습니다. 먼저 내용을 수정해주세요.'); return; }
     addVersion('consultant', '컨설턴트 수정', editedContent);
-    setOriginalContent(editedContent); // diff 기준을 수정본으로
-    handleRevise(editedContent);
+    handleRevise(editedContent); // originalContent는 보존
   };
 
-  // ===== 저장 =====
-  const handleSave = async () => {
-    if (!clientId) { showError('고객을 선택하거나 새로 등록해주세요.'); return; }
-    if (!companyName.trim() || !position.trim()) { showError('회사명과 직무를 입력해주세요.'); return; }
+  // ===== 마무리 (학습 등록 처리) =====
+  const handleFinalize = async () => {
+    if (isFinalized) return;
+
+    // 누적 active time flush
+    if (consultingId) {
+      const delta = pendingActiveDeltaRef.current;
+      if (delta > 0) {
+        pendingActiveDeltaRef.current = 0;
+        try { await window.api.updateConsulting(consultingId, { addActiveSeconds: delta }); }
+        catch { pendingActiveDeltaRef.current += delta; }
+      }
+    }
 
     try {
-      let cId = consultingId;
-      if (!cId) {
-        cId = await window.api.createConsulting({
-          clientId, companyName, position, jobPosting, status: phase === 'confirmed' ? 'completed' : 'in_progress',
-        });
-        setConsultingId(cId);
-      }
-
       const original = versions.find(v => v.type === 'original');
-      const confirmed = versions.filter(v => v.type === 'confirmed').pop();
-      const lastAi = versions.filter(v => v.type === 'ai').pop();
+      const finalContent = versions.filter(v => v.type === 'confirmed').pop()?.content
+        || editedContent || revisedContent;
 
-      // 원본 저장
-      if (original) {
-        await window.api.createRevision({ consultingId: cId, stage: 'draft', content: original.content });
-      }
-
-      // 최종 확정본 저장
-      const finalContent = confirmed?.content || editedContent || revisedContent;
-      const finalStage = phase === 'confirmed' ? 'final' : 'first';
-      await window.api.createRevision({
-        consultingId: cId, stage: finalStage, content: finalContent,
-        comments: lastAi?.comments, evaluation: lastAi?.evaluation,
-      });
-
-      // 학습 데이터 저장 (원본 → 최종 확정본) — AI 결과든 컨설턴트 수정이든 확정된 건 모두 학습
-      if (original) {
-        const hasConsultantVersion = versions.some(v => v.type === 'consultant');
+      if (addToTraining && original && clientId) {
         const memoText = consultingMemo
-          || (hasConsultantVersion ? '컨설턴트 수정 후 확정' : 'AI 첨삭 결과 확정');
+          || (hasConsultantEdit ? '컨설턴트 수정 후 확정' : 'AI 첨삭 결과 확정');
         const trainingCaseId = await window.api.createTrainingCase({
           clientId, title: `${companyName} ${position}`, companyName, position,
           directionMemo: memoText,
@@ -316,27 +507,32 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
         await window.api.saveTrainingRevision({ caseId: trainingCaseId, stage: 'draft', content: original.content });
         await window.api.saveTrainingRevision({ caseId: trainingCaseId, stage: 'final', content: finalContent });
 
-        // 패턴 분석 (비동기, 저장 후 백그라운드)
         window.api.analyzePattern({ original: original.content, final: finalContent })
           .then((res: any) => { if (res?.pattern) showSuccess('패턴 분석 완료: ' + res.pattern.slice(0, 80) + '...'); })
           .catch(() => {});
       }
 
-      setIsSaved(true);
-      showSuccess('저장 완료! 고객 이력에서 확인할 수 있습니다.');
-    } catch (err: any) { showError('저장 실패: ' + (err.message || '')); }
+      setIsFinalized(true);
+      showSuccess(addToTraining ? '마무리 완료. 학습 데이터에 추가했습니다.' : '마무리 완료. (학습 미등록)');
+    } catch (err: any) {
+      showError('마무리 실패: ' + (err.message || ''));
+    }
   };
 
   // ===== 초기화 =====
   const handleClear = () => {
-    setOriginalContent(''); setRevisedContent(''); setEditedContent('');
+    setOriginalContent(''); setRevisedContent(''); setEditedContent(''); setAiInputContent('');
     setComments([]); setEvaluation(null); setBeforeEvaluation(null); setIsEvaluating(false);
     setCompanyName(''); setPosition(''); setJobPosting(''); setClientMemo(''); setConsultingMemo('');
     setShowEval(false); setViewMode('diff'); setPhase('input');
     setErrorMsg(''); setSuccessMsg('');
     setVersions([]); setActiveVersion(-1);
     setConsultingId(undefined); setClientId(undefined);
-    setIsSaved(false); setShowJobPosting(false);
+    setRevisionIds({}); setAutoSaveStatus('idle');
+    consultingIdRef.current = undefined;
+    revisionIdsRef.current = {};
+    setAddToTraining(false); setIsFinalized(false);
+    setShowJobPosting(false);
   };
 
   // ===== 버전 클릭 =====
@@ -353,6 +549,15 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
       setViewMode(v.type === 'confirmed' ? 'result' : 'edit');
     }
   };
+
+  // ===== 자동저장 표시 =====
+  const autoSaveText = !consultingId
+    ? '입력 중'
+    : autoSaveStatus === 'saving'
+      ? '저장 중...'
+      : autoSaveStatus === 'saved'
+        ? '✓ 자동 저장됨'
+        : '대기';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -402,16 +607,15 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
         <button className={`btn btn-sm ${showJobPosting ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setShowJobPosting(!showJobPosting)}>공고 {showJobPosting ? '▲' : '▼'}</button>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <span style={{ fontSize: '12px', color: autoSaveStatus === 'saved' ? 'var(--success)' : 'var(--gray-400)' }}>
+            {autoSaveText}
+          </span>
           {selectedClient && (
             <button className="btn btn-sm btn-secondary" onClick={() => nav.goToClients(clientId)}>고객 정보</button>
           )}
           {phase !== 'input' && (
-            <>
-              <button className={`btn btn-sm ${isSaved ? 'btn-secondary' : 'btn-primary'}`}
-                onClick={handleSave} disabled={isSaved}>{isSaved ? '저장됨' : '저장'}</button>
-              <button className="btn btn-sm btn-secondary" onClick={handleClear}>새로 시작</button>
-            </>
+            <button className="btn btn-sm btn-secondary" onClick={handleClear}>새로 시작</button>
           )}
         </div>
       </div>
@@ -502,7 +706,7 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
                   <p>좌측에 자기소개서를 입력하고 '첨삭 시작'을 눌러주세요.</p>
                 </div>
               ) : viewMode === 'diff' ? (
-                <DiffView original={originalContent} revised={revisedContent} comments={comments} />
+                <DiffView original={diffOriginal} revised={revisedContent} comments={comments} />
               ) : viewMode === 'edit' ? (
                 <textarea className="content-textarea" value={editedContent}
                   onChange={(e) => setEditedContent(e.target.value)}
@@ -517,7 +721,6 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
             {revisedContent && phase === 'review' && !isLoading && (
               <div className="action-bar">
                 {viewMode === 'edit' ? (
-                  // 수정 모드
                   <>
                     <div className="action-bar-status">
                       {hasEdits ? (
@@ -538,7 +741,6 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
                     </div>
                   </>
                 ) : (
-                  // 비교/결과 모드
                   <>
                     <div className="action-bar-status">
                       <span className="action-status-hint">결과를 검토하세요. 수정이 필요하면 '수정' 탭을 누르세요.</span>
@@ -555,30 +757,50 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
               </div>
             )}
 
-            {/* 확정 후: 컨설팅 메모 입력 */}
+            {/* 확정 후: 학습 등록 토글 + 마무리 */}
             {phase === 'confirmed' && (
               <div className="action-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
                 <input
                   placeholder="컨설팅 방향 메모 (예: JD 키워드 이식 중심, 금융 어조 적용)"
                   value={consultingMemo}
                   onChange={(e) => setConsultingMemo(e.target.value)}
+                  disabled={isFinalized}
                   style={{ fontSize: '13px' }}
                 />
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: isFinalized ? 'default' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={addToTraining}
+                    onChange={(e) => setAddToTraining(e.target.checked)}
+                    disabled={isFinalized}
+                  />
+                  <span>이 사례를 학습 데이터로 추가
+                    {hasConsultantEdit
+                      ? <small style={{ color: 'var(--gray-400)', marginLeft: '6px' }}>(컨설턴트 수정 있음 — 추천)</small>
+                      : <small style={{ color: 'var(--warning)', marginLeft: '6px' }}>(AI 결과만 — 학습 비추천)</small>}
+                  </span>
+                </label>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: '12px', color: 'var(--gray-400)' }}>
-                    {isSaved ? '저장 완료' : '확정 완료 — "저장"을 눌러 이력에 기록하세요'}
+                    {isFinalized ? '✓ 마무리 완료' : '확정 완료 — "마무리"를 누르면 학습 등록이 처리됩니다'}
                   </span>
-                  {!isSaved && (
-                    <button className="btn btn-secondary btn-sm" onClick={() => {
-                      // 확정 버전을 이력에서 제거
-                      setVersions(prev => prev.filter(v => v.type !== 'confirmed'));
-                      setPhase('review');
-                      setViewMode('edit');
-                      showSuccess('확정 해제됨. 수정을 계속하세요.');
-                    }}>
-                      확정 해제
-                    </button>
-                  )}
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {!isFinalized && (
+                      <button className="btn btn-secondary btn-sm" onClick={() => {
+                        setVersions(prev => prev.filter(v => v.type !== 'confirmed'));
+                        setPhase('review');
+                        setViewMode('edit');
+                        showSuccess('확정 해제됨. 수정을 계속하세요.');
+                      }}>
+                        확정 해제
+                      </button>
+                    )}
+                    {!isFinalized && (
+                      <button className="btn btn-primary btn-sm" onClick={handleFinalize}>
+                        마무리
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -609,7 +831,7 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
                 <button className={`version-chip ${v.type} ${i === activeVersion ? 'active' : ''}`}
                   onClick={() => handleVersionClick(i)} title={`${v.timestamp} — ${v.label}`}>
                   <span className="version-chip-icon">
-                    {v.type === 'original' ? '&#128196;' : v.type === 'ai' ? '&#9889;' : v.type === 'confirmed' ? '&#10003;' : '&#9998;'}
+                    {v.type === 'original' ? '📄' : v.type === 'ai' ? '⚡' : v.type === 'confirmed' ? '✓' : '✎'}
                   </span>
                   {v.label}
                   <span className="version-chip-time">{v.timestamp}</span>

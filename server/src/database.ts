@@ -113,6 +113,23 @@ export function initDatabase() {
     console.log('[DB] Migration: clients.user_id added');
   }
 
+  // Migration: consultings에 측정 지표 컬럼 추가 (Phase 0)
+  const consultingCols = db.prepare("PRAGMA table_info(consultings)").all() as any[];
+  const consultingColNames = consultingCols.map((c: any) => c.name);
+  const consultingMigrations: { name: string; ddl: string }[] = [
+    { name: 'edit_ratio', ddl: 'ALTER TABLE consultings ADD COLUMN edit_ratio REAL' },
+    { name: 'edit_binary', ddl: 'ALTER TABLE consultings ADD COLUMN edit_binary INTEGER' },
+    { name: 'active_time_seconds', ddl: 'ALTER TABLE consultings ADD COLUMN active_time_seconds INTEGER DEFAULT 0' },
+    { name: 'outcome', ddl: "ALTER TABLE consultings ADD COLUMN outcome TEXT DEFAULT 'pending'" },
+    { name: 'outcome_received_at', ddl: 'ALTER TABLE consultings ADD COLUMN outcome_received_at TEXT' },
+  ];
+  for (const m of consultingMigrations) {
+    if (!consultingColNames.includes(m.name)) {
+      db.exec(m.ddl);
+      console.log(`[DB] Migration: consultings.${m.name} added`);
+    }
+  }
+
   // 기본 admin 계정 생성 (없으면)
   const adminExists = db.prepare("SELECT id FROM users WHERE username = 'admin'").get();
   if (!adminExists) {
