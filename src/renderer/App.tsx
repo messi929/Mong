@@ -39,6 +39,33 @@ export default function App() {
     (window as any).api.getAppVersion().then(setAppVersion).catch(() => {});
   }, []);
 
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const handleCheckUpdate = async () => {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      const r = await (window as any).api.checkForUpdates();
+      if (!r.ok) {
+        if (r.reason === 'dev') {
+          alert(r.message);
+        } else {
+          const logPath = await (window as any).api.getLogPath().catch(() => '');
+          if (confirm(`업데이트 확인 실패: ${r.message}\n\n로그 폴더를 열까요?\n${logPath}`)) {
+            (window as any).api.openLogFolder();
+          }
+        }
+        return;
+      }
+      if (r.isUpdateAvailable) {
+        // 다운로드는 이미 자동 시작됨 (autoDownload=true). 다이얼로그는 main에서 처리.
+      } else {
+        alert(`최신 버전입니다 (v${r.currentVersion}).`);
+      }
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
   const loadClients = useCallback(async () => {
     try {
       const data = await window.api.getClients();
@@ -91,9 +118,22 @@ export default function App() {
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
           {appVersion && (
-            <span style={{ fontSize: '12px', color: 'var(--gray-400)', fontVariantNumeric: 'tabular-nums' }}>
-              v{appVersion}
-            </span>
+            <button
+              onClick={handleCheckUpdate}
+              disabled={checkingUpdate}
+              title="클릭하여 업데이트 확인"
+              style={{
+                fontSize: '12px',
+                color: 'var(--gray-400)',
+                fontVariantNumeric: 'tabular-nums',
+                background: 'none',
+                border: 'none',
+                cursor: checkingUpdate ? 'wait' : 'pointer',
+                padding: '4px 6px',
+              }}
+            >
+              {checkingUpdate ? '확인 중…' : `v${appVersion}`}
+            </button>
           )}
           <span style={{ fontSize: '13px', color: 'var(--gray-500)' }}>{user.displayName}</span>
           <button className="nav-settings" onClick={() => setShowImport(true)}>Import</button>

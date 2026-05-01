@@ -1,7 +1,8 @@
 import dotenv from 'dotenv';
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import { autoUpdater } from 'electron-updater';
+import log from 'electron-log';
 
 const envPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
@@ -19,6 +20,37 @@ import { registerImportHandlers } from './handlers/importHandlers';
 if (process.env.MONG_SERVER_URL) setServerUrl(process.env.MONG_SERVER_URL);
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
+
+// 로그 파일 경로 + 로그 폴더 열기
+log.transports.file.level = 'info';
+log.transports.console.level = 'info';
+log.info(`[boot] Mong Consulting v${app.getVersion()} | packaged=${app.isPackaged}`);
+
+ipcMain.handle('app:getLogPath', () => log.transports.file.getFile().path);
+ipcMain.handle('app:openLogFolder', () => {
+  const logPath = log.transports.file.getFile().path;
+  return shell.showItemInFolder(logPath);
+});
+
+// 수동 업데이트 확인
+ipcMain.handle('app:checkForUpdates', async () => {
+  if (!app.isPackaged) {
+    return { ok: false, reason: 'dev', message: '개발 모드에서는 자동 업데이트가 비활성됩니다.' };
+  }
+  try {
+    log.info('[updater] manual check requested');
+    const result = await autoUpdater.checkForUpdates();
+    return {
+      ok: true,
+      currentVersion: app.getVersion(),
+      latestVersion: result?.updateInfo?.version ?? null,
+      isUpdateAvailable: result?.updateInfo?.version !== app.getVersion(),
+    };
+  } catch (err: any) {
+    log.error('[updater] manual check failed:', err);
+    return { ok: false, reason: 'error', message: err?.message || String(err) };
+  }
+});
 
 // Auth handlers (토큰 없이 호출 가능)
 ipcMain.handle('auth:login', async (_, data: { username: string; password: string }) => {
@@ -102,8 +134,14 @@ app.on('window-all-closed', () => {
 if (app.isPackaged) {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = log;
+
+  autoUpdater.on('checking-for-update', () => {
+    log.info('[updater] checking-for-update');
+  });
 
   autoUpdater.on('update-available', (info) => {
+    log.info(`[updater] update-available: ${info.version}`);
     dialog.showMessageBox({
       type: 'info',
       title: '업데이트 발견',
@@ -111,7 +149,16 @@ if (app.isPackaged) {
     });
   });
 
-  autoUpdater.on('update-downloaded', () => {
+  autoUpdater.on('update-not-available', (info) => {
+    log.info(`[updater] update-not-available: latest=${info.version}, current=${app.getVersion()}`);
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    log.info(`[updater] download-progress: ${progress.percent.toFixed(1)}% (${progress.transferred}/${progress.total} bytes)`);
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    log.info(`[updater] update-downloaded: ${info.version}`);
     dialog.showMessageBox({
       type: 'info',
       title: '업데이트 준비 완료',
@@ -124,11 +171,22 @@ if (app.isPackaged) {
     });
   });
 
-  autoUpdater.on('error', () => {
-    // 업데이트 실패는 무시 (오프라인 등)
+  autoUpdater.on('error', (err) => {
+    log.error('[updater] error:', err);
+    const logPath = log.transports.file.getFile().path;
+    dialog.showMessageBox({
+      type: 'error',
+      title: '업데이트 오류',
+      message: '자동 업데이트 처리 중 오류가 발생했습니다.',
+      detail: `${err?.message || String(err)}\n\n로그 파일:\n${logPath}`,
+      buttons: ['확인'],
+    });
   });
 
   app.whenReady().then(() => {
-    autoUpdater.checkForUpdates().catch(() => {});
+    log.info('[updater] startup check');
+    autoUpdater.checkForUpdates().catch((err) => {
+      log.error('[updater] startup check failed:', err);
+    });
   });
 }
