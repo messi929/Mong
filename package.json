@@ -58,6 +58,7 @@
       "dist/renderer/**/*",
       "dist/shared/**/*"
     ],
+    "artifactName": "Mong-Consulting-Setup-${version}.${ext}",
     "win": {
       "target": [
         {
