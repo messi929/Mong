@@ -38,48 +38,59 @@ function loadStyleProfile(): string {
 
 function formatProfileForPrompt(profile: any): string {
   const rp = profile.revisionPatterns;
-  const qb = profile.qualityBenchmark;
-  if (!rp && !qb) return '';
+  if (!rp) return '';
 
-  let text = '\n\n=== 데이터 기반 스타일 프로파일 (학습 데이터 ' + profile.dataStats?.trainingPairs + '쌍 + 합격자소서 ' + profile.dataStats?.calibrationDocs + '건 분석) ===\n';
+  let text = '\n\n=== 데이터 기반 컨설팅 전략 프로파일 (학습 데이터 ' + profile.dataStats?.trainingPairs + '쌍 + 합격자소서 ' + profile.dataStats?.calibrationDocs + '건 분석) ===\n';
+  text += '아래는 실제 컨설턴트의 원본→최종 첨삭에서 추출한 *전략적 판단 패턴*입니다. 단어 치환이 아니라, 이 진단·재설계 논리를 그대로 재현하세요.\n';
 
-  if (rp.ending_rules?.length) {
-    text += '\n[어미 변환 규칙]\n';
-    for (const r of rp.ending_rules) text += `- "${r.from}" → "${r.to}" (${r.frequency}) ${r.note || ''}\n`;
+  if (rp.diagnostic_map?.length) {
+    text += '\n[진단 → 처방 매핑] 원문에서 이 증상이 보이면 이 처방을 적용\n';
+    for (const d of rp.diagnostic_map) {
+      text += `- 증상: ${d.symptom}\n  └ 근본 원인: ${d.root_cause}\n  └ 처방: ${d.prescription} (${d.frequency})\n`;
+    }
   }
 
-  if (rp.word_replacements?.length) {
-    text += '\n[단어 교체 사전]\n';
-    for (const r of rp.word_replacements) text += `- "${r.from}" → "${r.to}" (${r.frequency}, ${r.context || ''})\n`;
+  if (rp.episode_decisions?.length) {
+    text += '\n[에피소드 취사선택] 어떤 경험을 남기고 버리는가\n';
+    for (const e of rp.episode_decisions) {
+      text += `- 전: ${e.before} ⇒ 후: ${e.after}\n  └ 판단 기준: ${e.criteria} (${e.frequency})\n`;
+    }
   }
 
-  if (rp.deleted_expressions?.length) {
-    text += '\n[삭제 대상 표현]\n';
-    for (const r of rp.deleted_expressions) text += `- "${r.expression}" (${r.frequency}) — ${r.reason || ''}\n`;
+  if (rp.jd_transplant?.length) {
+    text += '\n[JD 이식 방식] JD 키워드를 자소서 뼈대에 박는 법\n';
+    for (const j of rp.jd_transplant) {
+      text += `- ${j.location}: ${j.method}${j.example ? `\n  예: ${j.example}` : ''} (${j.frequency})\n`;
+    }
   }
 
-  if (rp.added_expressions?.length) {
-    text += '\n[추가 권장 표현]\n';
-    for (const r of rp.added_expressions) text += `- "${r.expression}" (${r.frequency}, ${r.context || ''})\n`;
+  if (rp.structure_redesign?.length) {
+    text += '\n[구조 재설계] 문항 구조를 어떻게 다시 짜는가\n';
+    for (const s of rp.structure_redesign) {
+      text += `- ${s.from} ⇒ ${s.to}\n  └ 이유: ${s.rationale} (${s.frequency})\n`;
+    }
   }
 
-  if (rp.structure_rules?.length) {
-    text += '\n[구조 규칙]\n';
-    for (const r of rp.structure_rules) text += `- ${r.rule} (${r.frequency})\n`;
+  if (rp.company_asset_tactics?.length) {
+    text += '\n[기업 고유 자산 발굴]\n';
+    for (const c of rp.company_asset_tactics) {
+      text += `- ${c.tactic} (${c.frequency}) — 적용 상황: ${c.trigger}\n`;
+      if (c.examples?.length) text += `  예시: ${c.examples.join(', ')}\n`;
+    }
   }
 
-  if (rp.industry_tone) {
-    text += '\n[직군별 어조]\n';
-    for (const [ind, tone] of Object.entries(rp.industry_tone)) text += `- ${ind}: ${tone}\n`;
+  if (rp.industry_strategy) {
+    text += '\n[직군별 전략]\n';
+    for (const [ind, strat] of Object.entries(rp.industry_strategy)) text += `- ${ind}: ${strat}\n`;
   }
 
-  if (rp.sentence_patterns?.length) {
-    text += '\n[문장 패턴]\n';
-    for (const r of rp.sentence_patterns) text += `- ${r.pattern} (${r.frequency})\n`;
+  if (rp.expression_signature?.length) {
+    text += '\n[표현 시그니처] 데이터에서 가장 지배적인 어조 규칙 (세부 단어 규칙은 아래 시스템 룰 참조)\n';
+    for (const r of rp.expression_signature) text += `- "${r.from}" → "${r.to}" (${r.frequency})\n`;
   }
 
-  text += '\n위 규칙은 실제 컨설턴트의 첨삭 데이터에서 추출한 것입니다. 빈도가 높은 규칙일수록 반드시 적용하세요.\n';
-  text += '=== 스타일 프로파일 끝 ===\n';
+  text += '\n위 패턴은 실제 컨설턴트 첨삭 데이터에서 추출한 것입니다. 빈도가 높을수록 강하게 적용하세요.\n';
+  text += '=== 전략 프로파일 끝 ===\n';
 
   return text;
 }
@@ -203,23 +214,37 @@ const REVISION_INSTRUCTION = `자기소개서를 진단하고, *개선이 필요
 - 소제목 수치/키워드가 본문과 일치하는지 확인
 - 글자수 확인`;
 
-function buildTrainingExamples(clientId?: number): string {
+function buildTrainingExamples(clientId?: number, companyName?: string, position?: string): string {
   const db = getDb();
 
-  let cases: any[] = [];
-  if (clientId) {
-    cases = db.prepare(`
-      SELECT tc.* FROM training_cases tc
-      WHERE tc.client_id = ?
-      ORDER BY tc.created_at DESC LIMIT 3
-    `).all(clientId);
-  }
+  // 연관성 점수로 후보 정렬: 같은 고객 > 같은 회사 > 같은 직무 > 최신순
+  const candidates = db.prepare(`
+    SELECT tc.*,
+      (CASE WHEN tc.client_id = @clientId THEN 100 ELSE 0 END) +
+      (CASE WHEN @company != '' AND tc.company_name LIKE @companyLike THEN 50 ELSE 0 END) +
+      (CASE WHEN @position != '' AND tc.position LIKE @positionLike THEN 20 ELSE 0 END) AS relevance
+    FROM training_cases tc
+    ORDER BY relevance DESC, tc.created_at DESC
+    LIMIT 8
+  `).all({
+    clientId: clientId ?? -1,
+    company: companyName ?? '',
+    companyLike: `%${companyName ?? ''}%`,
+    position: position ?? '',
+    positionLike: `%${position ?? ''}%`,
+  }) as any[];
 
-  if (cases.length === 0) {
-    cases = db.prepare(`
-      SELECT tc.* FROM training_cases tc
-      ORDER BY tc.created_at DESC LIMIT 3
-    `).all();
+  // 개정본이 2건 이상인 유효 사례만 연관성 순으로 최대 3건 수집
+  const cases: any[] = [];
+  for (const tc of candidates) {
+    const revisions = db.prepare(`
+      SELECT stage, content FROM training_revisions
+      WHERE case_id = ?
+      ORDER BY CASE stage WHEN 'draft' THEN 1 WHEN 'first' THEN 2 WHEN 'second' THEN 3 WHEN 'final' THEN 4 END
+    `).all(tc.id) as any[];
+    if (revisions.length < 2) continue;
+    cases.push({ ...tc, revisions });
+    if (cases.length >= 3) break;
   }
 
   if (cases.length === 0) return '';
@@ -227,14 +252,6 @@ function buildTrainingExamples(clientId?: number): string {
   let examples = '\n\n=== 과거 컨설팅 사례 (이 스타일과 방향으로 첨삭해주세요) ===\n';
 
   for (const tc of cases) {
-    const revisions = db.prepare(`
-      SELECT stage, content FROM training_revisions
-      WHERE case_id = ?
-      ORDER BY CASE stage WHEN 'draft' THEN 1 WHEN 'first' THEN 2 WHEN 'second' THEN 3 WHEN 'final' THEN 4 END
-    `).all(tc.id);
-
-    if (revisions.length < 2) continue;
-
     examples += `\n--- 사례: ${tc.title || ''}`;
     if (tc.company_name) examples += ` (${tc.company_name}`;
     if (tc.position) examples += ` / ${tc.position}`;
@@ -245,7 +262,7 @@ function buildTrainingExamples(clientId?: number): string {
       examples += `컨설턴트 방향: ${tc.direction_memo}\n`;
     }
 
-    for (const rev of revisions as any[]) {
+    for (const rev of tc.revisions) {
       examples += `\n[${STAGE_LABELS[rev.stage] || rev.stage}]\n${rev.content}\n`;
     }
   }
@@ -270,7 +287,7 @@ export interface RevisionRequest {
 export async function performRevision(request: RevisionRequest) {
   const anthropic = getClient();
 
-  const trainingExamples = buildTrainingExamples(request.clientId);
+  const trainingExamples = buildTrainingExamples(request.clientId, request.companyName, request.position);
   const styleProfile = loadStyleProfile();
 
   const systemPrompt = `당신은 대한민국 최고 수준의 자기소개서/이력서 컨설턴트입니다.
