@@ -42,6 +42,7 @@ export interface Revision {
   content: string;           // 본문
   comments?: string;         // AI 첨삭 코멘트 (JSON)
   evaluation?: string;       // 종합 평가 (JSON)
+  diagnostics?: string;      // 문항별 전략 진단 (JSON)
   createdAt: string;
 }
 
@@ -61,14 +62,25 @@ export interface RevisionResponse {
   revisedContent: string;
   comments: RevisionComment[];
   evaluation: Evaluation;
+  questionDiagnostics?: QuestionDiagnostic[];
 }
 
-// 개별 첨삭 코멘트
+// 개별 첨삭 코멘트 (단어~문단 단위 모두 가능, enrichment는 각색 단위)
 export interface RevisionComment {
   originalText: string;
   revisedText: string;
   reason: string;
-  category: 'clarity' | 'specificity' | 'relevance' | 'structure' | 'expression' | 'grammar';
+  category: 'clarity' | 'specificity' | 'relevance' | 'structure' | 'expression' | 'grammar' | 'enrichment';
+}
+
+// 문항별 전략 진단 — 단어 단위 comments로 담을 수 없는 구조·서사 차원의 판단
+export interface QuestionDiagnostic {
+  questionIndex: number;          // 1, 2, 3...
+  questionExcerpt: string;        // 문항 식별용 첫 30~50자
+  diagnosis: string;              // 원본 문항의 구조·서사 진단 (무엇이 부족/문제)
+  redesignDirection: string;      // 재설계 방향과 그 이유 (각색·구조 변경 의도)
+  preservedFromOriginal: string;  // 의도적으로 보존한 핵심 디테일·표현·작성자 목소리
+  remainingGaps: string;          // 각색으로도 채울 수 없어 고객 보완 필요 (없으면 빈 문자열)
 }
 
 // 종합 평가

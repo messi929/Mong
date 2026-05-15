@@ -46,6 +46,7 @@ const toRevision = (row: any) => ({
   content: row.content,
   comments: row.comments,
   evaluation: row.evaluation,
+  diagnostics: row.diagnostics,
   createdAt: row.created_at,
 });
 
@@ -243,12 +244,13 @@ function recomputeFinalMetrics(consultingId: number, finalContent: string): void
 router.post('/revisions', (req: Request, res: Response) => {
   const data = req.body;
   const result = getDb().prepare(`
-    INSERT INTO revisions (consulting_id, stage, content, comments, evaluation)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO revisions (consulting_id, stage, content, comments, evaluation, diagnostics)
+    VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     data.consultingId, data.stage, data.content,
     data.comments ? JSON.stringify(data.comments) : null,
-    data.evaluation ? JSON.stringify(data.evaluation) : null
+    data.evaluation ? JSON.stringify(data.evaluation) : null,
+    data.diagnostics ? JSON.stringify(data.diagnostics) : null
   );
 
   const newStatus = data.stage === 'final' ? 'completed' : 'in_progress';
@@ -269,12 +271,14 @@ router.put('/revisions/:id', (req: Request, res: Response) => {
     UPDATE revisions SET
       content = COALESCE(?, content),
       comments = ?,
-      evaluation = ?
+      evaluation = ?,
+      diagnostics = ?
     WHERE id = ?
   `).run(
     data.content ?? null,
     data.comments ? JSON.stringify(data.comments) : null,
     data.evaluation ? JSON.stringify(data.evaluation) : null,
+    data.diagnostics ? JSON.stringify(data.diagnostics) : null,
     req.params.id
   );
 

@@ -408,6 +408,14 @@ npx tsx scripts/build-style-profile.ts
 - evaluation 작성 규칙에 5점 미만 원인 구분(원문 한계 vs 첨삭 미완료) 추가
 - 평가 엔진 `performEvaluation`은 객관성 유지 위해 미변경
 
+**(f) 출력 스키마 전략화 — questionDiagnostics 신설** (`server/src/aiEngine.ts`, `server/src/database.ts`, `server/src/routes.ts`, `src/shared/types.ts`, `src/renderer/components/DiffView.tsx`, `src/renderer/pages/ConsultingPage.tsx`)
+- (e)까지 적용했지만 rev 40 재테스트에서 enrichment 여전히 0건 — 단어 단위 `comments` 스키마가 *각색을 담을 자리가 없는* 진짜 병목임이 확인됨
+- AI 응답에 `questionDiagnostics: [{questionIndex, questionExcerpt, diagnosis, redesignDirection, preservedFromOriginal, remainingGaps}]` 필드 신설. 문항별 *전략·서사 차원의 판단*을 담는 자리
+- `comments` 스키마에 `enrichment` 카테고리 추가. `originalText`/`revisedText`는 단어~문단 단위 모두 허용(각색 시 문단 통째 가능) 명시
+- DB: `revisions.diagnostics` 컬럼 추가 + 마이그레이션
+- `DiffView`에 문항별 진단 카드 섹션 (Q번호, 진단, 재설계 방향, 보존 디테일, 고객 보완 필요) 렌더링
+- 결과: diagnostics는 구체적이고 정확하게 생성됨 (작성자의 작은 수치 오류도 자체 교정). 단 enrichment 카테고리 comments는 *여전히 0건* — 모델이 이 자소서를 "이미 괜찮음"으로 판단해 각색 거부. 다음 후보: 다른(더 빈약한) 자소서로 enrichment 트리거 검증, 또는 3-pass 분할 처리
+
 **(e) 상단 우선순위 구조 수술** (`server/src/aiEngine.ts`)
 - (c)·(d) 적용 후 재테스트(rev 40) 결과 회귀 — AI가 평가 4~5점 보고 "충분히 좋음" 모드로 도망, 각색 0건, 본문 거의 그대로 반환. 시스템 프롬프트 상단의 보수적 게이트가 (c)·(d)를 누르고 있었음
 - 4개 "최우선" 섹션이 경쟁하던 상단 구조를 단일 목표 + 가드레일 위계로 재배치

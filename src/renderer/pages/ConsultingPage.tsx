@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import DiffView from '../components/DiffView';
 import EvaluationPanel from '../components/EvaluationPanel';
 import type { NavigationContext } from '../App';
-import type { Client, RevisionResponse, RevisionComment, Evaluation } from '../../shared/types';
+import type { Client, RevisionResponse, RevisionComment, Evaluation, QuestionDiagnostic } from '../../shared/types';
 
 declare global {
   interface Window { api: any; }
@@ -16,6 +16,7 @@ interface VersionEntry {
   content: string;
   comments?: RevisionComment[];
   evaluation?: Evaluation;
+  diagnostics?: QuestionDiagnostic[];
   timestamp: string;
 }
 
@@ -54,6 +55,7 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
   const [revisedContent, setRevisedContent] = useState('');
   const [editedContent, setEditedContent] = useState('');
   const [comments, setComments] = useState<RevisionComment[]>([]);
+  const [diagnostics, setDiagnostics] = useState<QuestionDiagnostic[]>([]);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [beforeEvaluation, setBeforeEvaluation] = useState<Evaluation | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
@@ -200,11 +202,13 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
           if (lastFirst) {
             const cmt = lastFirst.comments ? safeParse(lastFirst.comments) : undefined;
             const ev = lastFirst.evaluation ? safeParse(lastFirst.evaluation) : undefined;
+            const diag = lastFirst.diagnostics ? safeParse(lastFirst.diagnostics) : undefined;
             setRevisedContent(lastFirst.content);
             setEditedContent(lastFirst.content);
             if (cmt) setComments(cmt);
+            if (diag) setDiagnostics(diag);
             if (ev) { setEvaluation(ev); setShowEval(true); }
-            addVersion('ai', 'AI 첨삭', lastFirst.content, cmt, ev);
+            addVersion('ai', 'AI 첨삭', lastFirst.content, cmt, ev, diag);
             setPhase('review');
           }
           if (lastSecond) {
@@ -292,17 +296,18 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
     content: string,
     cmt?: RevisionComment[],
     ev?: Evaluation | null,
-    forceCreate = false
+    forceCreate = false,
+    diag?: QuestionDiagnostic[],
   ) => {
     const cId = consultingIdRef.current;
     if (!cId) return;
 
     const existingId = revisionIdsRef.current[stage];
     if (existingId && !forceCreate) {
-      await window.api.updateRevision(existingId, { content, comments: cmt, evaluation: ev });
+      await window.api.updateRevision(existingId, { content, comments: cmt, evaluation: ev, diagnostics: diag });
     } else {
       const newId = await window.api.createRevision({
-        consultingId: cId, stage, content, comments: cmt, evaluation: ev,
+        consultingId: cId, stage, content, comments: cmt, evaluation: ev, diagnostics: diag,
       });
       revisionIdsRef.current = { ...revisionIdsRef.current, [stage]: newId };
       setRevisionIds(prev => ({ ...prev, [stage]: newId }));
@@ -379,8 +384,8 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
   };
 
   // ===== 버전 추가 =====
-  const addVersion = (type: VersionEntry['type'], label: string, content: string, cmt?: RevisionComment[], ev?: Evaluation) => {
-    const entry: VersionEntry = { type, label, content, comments: cmt, evaluation: ev, timestamp: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) };
+  const addVersion = (type: VersionEntry['type'], label: string, content: string, cmt?: RevisionComment[], ev?: Evaluation, diag?: QuestionDiagnostic[]) => {
+    const entry: VersionEntry = { type, label, content, comments: cmt, evaluation: ev, diagnostics: diag, timestamp: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) };
     setVersions(prev => { const next = [...prev, entry]; setActiveVersion(next.length - 1); return next; });
   };
 
@@ -410,18 +415,20 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
         companyName, position, jobPosting, clientMemo, clientId,
       });
 
+      const diag = result.questionDiagnostics || [];
       setRevisedContent(result.revisedContent);
       setEditedContent(result.revisedContent);
       setComments(result.comments);
+      setDiagnostics(diag);
       setEvaluation(result.evaluation);
       setShowEval(true);
       setViewMode('diff');
       setPhase('review');
 
-      addVersion('ai', 'AI 첨삭', result.revisedContent, result.comments, result.evaluation);
+      addVersion('ai', 'AI 첨삭', result.revisedContent, result.comments, result.evaluation, diag);
 
       // first revision은 재첨삭마다 새 row (학습/이력 추적용)
-      await saveRevisionStage('first', result.revisedContent, result.comments, result.evaluation, true);
+      await saveRevisionStage('first', result.revisedContent, result.comments, result.evaluation, true, diag);
       setAutoSaveStatus('saved');
     } catch (err: any) {
       showError(err.message || '첨삭에 실패했습니다.');
@@ -522,7 +529,7 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
   // ===== 초기화 =====
   const handleClear = () => {
     setOriginalContent(''); setRevisedContent(''); setEditedContent(''); setAiInputContent('');
-    setComments([]); setEvaluation(null); setBeforeEvaluation(null); setIsEvaluating(false);
+    setComments([]); setDiagnostics([]); setEvaluation(null); setBeforeEvaluation(null); setIsEvaluating(false);
     setCompanyName(''); setPosition(''); setJobPosting(''); setClientMemo(''); setConsultingMemo('');
     setShowEval(false); setViewMode('diff'); setPhase('input');
     setErrorMsg(''); setSuccessMsg('');
@@ -542,6 +549,7 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
     if (v.type === 'ai') {
       setRevisedContent(v.content); setEditedContent(v.content);
       if (v.comments) setComments(v.comments);
+      if (v.diagnostics) setDiagnostics(v.diagnostics); else setDiagnostics([]);
       if (v.evaluation) { setEvaluation(v.evaluation); setShowEval(true); }
       setViewMode('diff');
     } else if (v.type === 'consultant' || v.type === 'confirmed') {
@@ -706,7 +714,7 @@ export default function ConsultingPage({ nav, clients, onClientsChange, initialC
                   <p>좌측에 자기소개서를 입력하고 '첨삭 시작'을 눌러주세요.</p>
                 </div>
               ) : viewMode === 'diff' ? (
-                <DiffView original={diffOriginal} revised={revisedContent} comments={comments} />
+                <DiffView original={diffOriginal} revised={revisedContent} comments={comments} diagnostics={diagnostics} />
               ) : viewMode === 'edit' ? (
                 <textarea className="content-textarea" value={editedContent}
                   onChange={(e) => setEditedContent(e.target.value)}

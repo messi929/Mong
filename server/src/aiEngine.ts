@@ -439,11 +439,19 @@ ${styleProfile}
 - 던지듯 끝낸 결론을 JD 키워드와 연결해 완성된 마무리로
 - 판단 기준: "원문 작성자가 이 문장을 보고 '내가 한 게 맞다'고 인정할 것인가" → 인정하면 각색(필수), 부정하면 날조(금지)
 
-빈약 신호 — 다음이 보이면 각색 안 하면 직무유기:
-- 한 문장으로 끝난 경험·교훈 (펼칠 여지가 있음에도)
-- "잘 해결했다", "성과를 거두었다" 같은 추상 결론 (구체 행동·결과로 풀어낼 여지)
-- 문제만 있고 해결 과정이 압축됨 / 해결만 있고 문제 정의가 모호함
-- "느꼈다", "배웠다" 다음에 무엇을 어떻게 적용했는지 없음
+빈약 신호 — 다음 중 *하나라도* 보이면 그 부분에 대해 enrichment 카테고리 comment를 *반드시* 생성하고 revisedContent에 실제로 반영하세요. 단순히 진단만 하고 실행 안 하면 첨삭 미완료입니다:
+- 한 문장으로 끝난 경험·교훈 → 무엇을 어떻게 다음에 적용했는지 2~3문장 서사로 펼침
+- "잘 해결했다", "성과를 거두었다", "성장했습니다" 같은 추상 결론 → 구체적 행동·결과·의미를 풀어쓴 2~3문장으로 교체
+- 도입부 첫 문장이 시장 정의·수치·직무 정의가 아님 → 1~2문장 시장 분석 서사로 교체
+- 마무리가 한 줄이고 JD 키워드 부족 → 회사+JD+기여 방향을 담은 2문장 마무리로 확장
+- 문제만 있고 해결 과정이 압축됨 / 해결만 있고 문제 정의가 모호함 → 부족한 쪽을 펼침
+- "느꼈다", "배웠다" 다음에 무엇을 어떻게 적용했는지 없음 → 적용 사례·전이 학습을 1~2문장으로 추가 (원문 맥락에서 추론 가능 범위 내에서)
+
+[자기 검증 — 제출 전 확인]
+- evaluation에서 한 항목이라도 5점 미만이면 → 그 항목에 해당하는 enrichment 또는 structure 변경이 revisedContent에 *반드시* 있어야 합니다
+- comments에 enrichment 카테고리가 0건이고 evaluation에 4점 이하 항목이 있으면 → 모순입니다. 더 작업하세요
+- questionDiagnostics의 redesignDirection에 적은 변경 사항은 revisedContent와 comments에 *실제 실행되어 있어야* 합니다. 진단만 적고 실행 안 하면 게으른 첨삭입니다
+- "정밀 교정만 시행" 같은 표현으로 작업 회피를 정당화하지 마세요 — 4점 이하가 있으면 정밀 교정만으로는 부족하다는 의미입니다
 
 [금지 — 사실 창작]
 - 원문에 없는 경험·프로젝트·성과·수치를 새로 만들어내기
@@ -465,12 +473,22 @@ ${trainingExamples}
 반드시 아래 JSON 형식으로만 응답하세요:
 {
   "revisedContent": "첨삭된 전체 자기소개서 텍스트",
+  "questionDiagnostics": [
+    {
+      "questionIndex": 1,
+      "questionExcerpt": "문항 식별용 첫 30~50자",
+      "diagnosis": "이 문항의 구조·서사 진단 — 무엇이 부족했고 왜 빈약했는지",
+      "redesignDirection": "각색·구조 재설계로 무엇을 어떻게 바꿨고 그 이유",
+      "preservedFromOriginal": "의도적으로 보존한 작성자 고유의 디테일·표현·목소리",
+      "remainingGaps": "각색으로도 채울 수 없어 고객 보완이 필요한 부분 (없으면 빈 문자열)"
+    }
+  ],
   "comments": [
     {
-      "originalText": "원본에서 수정한 부분",
-      "revisedText": "수정된 텍스트",
+      "originalText": "원본 — 단어/문장/문단 단위 모두 가능",
+      "revisedText": "수정본 — 각색이면 한 문단을 통째로 재작성한 결과여도 됨",
       "reason": "수정 이유 설명",
-      "category": "clarity|specificity|relevance|structure|expression|grammar"
+      "category": "clarity|specificity|relevance|structure|expression|grammar|enrichment"
     }
   ],
   "evaluation": {
@@ -482,6 +500,20 @@ ${trainingExamples}
     "overall": "종합 평가 텍스트 (아래 형식으로 작성)"
   }
 }
+
+=== questionDiagnostics 작성 규칙 ===
+이 필드는 *구조·서사 차원의 전략적 판단*을 담는 곳입니다. comments(원자~문단 단위 치환)와 역할이 다릅니다:
+- comments는 "이 부분을 이렇게 바꿨다"의 *결과물 목록*
+- questionDiagnostics는 "이 문항을 왜 이렇게 재설계했고 무엇을 보존했나"의 *판단 근거*
+
+문항마다 한 개씩 작성합니다(자소서가 1문항이면 1개, 3문항이면 3개). diagnosis·redesignDirection은 1~3문장으로 구체적으로. "구조를 개선함" 같은 추상 서술 금지 — "도입부가 일반론으로 시작 → 디지털 취약계층 수요 분석으로 첫 문장 교체" 식으로 명시.
+
+각색을 했다면 redesignDirection에 *어떤 압축된 서술을 어떤 서사로 펼쳤는지* 적습니다. 각색하지 않았다면(원문이 이미 5점) diagnosis에 그 이유를 적습니다.
+
+=== comments 작성 규칙 ===
+- comments는 *결과물 목록*입니다. 한 문단을 통째로 각색하면 그 문단을 originalText에, 재작성본을 revisedText에 넣고 category를 'enrichment'로 표시하세요.
+- 단어 단위 치환(예: "깊은" 삭제, "기여하겠습니다" 변환)은 그대로 atomic 단위로 넣습니다.
+- 각색 결과인 enrichment 카테고리 comment가 *최소 1건은 있어야* 합니다 — 단, 자소서 전체가 이미 5점이라 각색이 불필요한 예외 상황은 제외. 이 경우 questionDiagnostics의 diagnosis에 그 판단 근거 명시.
 
 === evaluation 작성 규칙 ===
 각 항목 점수(1-5)를 매긴 후, overall에 다음을 포함하세요:

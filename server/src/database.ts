@@ -113,6 +113,13 @@ export function initDatabase() {
     console.log('[DB] Migration: clients.user_id added');
   }
 
+  // Migration: revisions에 diagnostics 컬럼 추가 (v3.2 출력 스키마 전략화)
+  const revisionCols = db.prepare("PRAGMA table_info(revisions)").all() as any[];
+  if (!revisionCols.some((c: any) => c.name === 'diagnostics')) {
+    db.exec('ALTER TABLE revisions ADD COLUMN diagnostics TEXT');
+    console.log('[DB] Migration: revisions.diagnostics added');
+  }
+
   // Migration: consultings에 측정 지표 컬럼 추가 (Phase 0)
   const consultingCols = db.prepare("PRAGMA table_info(consultings)").all() as any[];
   const consultingColNames = consultingCols.map((c: any) => c.name);
