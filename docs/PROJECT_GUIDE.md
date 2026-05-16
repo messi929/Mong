@@ -408,6 +408,14 @@ npx tsx scripts/build-style-profile.ts
 - evaluation 작성 규칙에 5점 미만 원인 구분(원문 한계 vs 첨삭 미완료) 추가
 - 평가 엔진 `performEvaluation`은 객관성 유지 위해 미변경
 
+**(g) 날조 단속 강화 — 절대 발명 금지 카테고리 명시** (`server/src/aiEngine.ts`)
+- (f) 후 빈약 자소서로 enrichment 트리거 검증 → 작동 확인됨. 그러나 검증 과정에서 **각색이 거의 전부 날조였음** 발견 (수상 발명, 수치 발명, 특정 해시태그 발명, 인용 발명)
+- 원인: 모델이 빈약함을 인지하면 "각색 의무"를 따라 자유 창작 모드로 전환. *추론 가능 범위*라는 그라디언트가 약함
+- `절대 발명 금지` 섹션 신설 — 각색 의무보다 *우선*. 8개 카테고리 명시: 수치·장소·프로젝트명·수상·브랜드명·특정 도구/태그·인용·기간/인원. 위반 시 결과물 신뢰도 즉시 무너짐
+- 허용되는 각색 범위 명시 (서사·구조·표현·일반 지식)와 분리
+- 제출 전 자체 검증 의무화: revisedContent 전체 훑으며 수치·고유명사·수상·도구명이 원문에 *글자 그대로* 있는지 확인
+- 재테스트 결과: 빈약 자소서에서 enrichment 2건은 유지되면서 큰 날조(수상·수치·인용·특정 태그)는 모두 제거됨. 작은 위치/시간 발명만 일부 남음. 괄호 메모 출현. 날조 단속 80% 달성
+
 **(f) 출력 스키마 전략화 — questionDiagnostics 신설** (`server/src/aiEngine.ts`, `server/src/database.ts`, `server/src/routes.ts`, `src/shared/types.ts`, `src/renderer/components/DiffView.tsx`, `src/renderer/pages/ConsultingPage.tsx`)
 - (e)까지 적용했지만 rev 40 재테스트에서 enrichment 여전히 0건 — 단어 단위 `comments` 스키마가 *각색을 담을 자리가 없는* 진짜 병목임이 확인됨
 - AI 응답에 `questionDiagnostics: [{questionIndex, questionExcerpt, diagnosis, redesignDirection, preservedFromOriginal, remainingGaps}]` 필드 신설. 문항별 *전략·서사 차원의 판단*을 담는 자리
